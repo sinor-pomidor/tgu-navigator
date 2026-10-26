@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     # Окружение приложения: dev | prod
     app_env: str = "dev"
 
+    # --- Конвейер сбора данных (ingestion) -----------------------------
+    # Стартовые URL публичных страниц ТГУ для парсинга анонсов/новостей.
+    # Можно переопределить через INGEST_START_URLS в .env (через запятую).
+    ingest_start_urls: list[str] = [
+        "https://news.tsu.ru/calendar-of-events/",
+        "https://vestnik.tsu.ru/",
+    ]
+    # Задержка между запросами к сайту, сек (не превращаем сбор в DDoS).
+    ingest_delay_seconds: float = 1.5
+    # Сколько parsed-записей не подтверждалось источником, после чего они
+    # автоматически переводятся в closed (дни).
+    ingest_stale_days: int = 45
+
 
 @lru_cache
 def get_settings() -> Settings:
