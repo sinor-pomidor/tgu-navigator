@@ -42,8 +42,8 @@ def normalize_title(title: str) -> str:
     стабильного external_id.
     """
     cleaned = re.sub(r"\s+", " ", title.strip().lower())
-    cleaned = re.sub(r"[«»\"']+", "", cleaned)
-    return cleaned.rstrip(" .—-:")
+    cleaned = re.sub(r"[«»\"'!?]+", "", cleaned)
+    return cleaned.strip(" .—-:;")
 
 
 def _normalize_tags(tags: list[str]) -> list[str]:
