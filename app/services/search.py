@@ -33,7 +33,7 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from app.db import engine as default_engine
+from app.db import get_engine
 from app.models import Opportunity
 
 logger = logging.getLogger(__name__)
@@ -201,7 +201,7 @@ def search(
     if not cleaned:
         return []
 
-    eng = engine or (db.get_bind() if db is not None else default_engine)
+    eng = engine or (db.get_bind() if db is not None else get_engine())
     own_session = db is None
     session = db if db is not None else Session(bind=eng)
 
