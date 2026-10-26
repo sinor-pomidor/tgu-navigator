@@ -8,7 +8,7 @@ import logging
 
 from fastapi import FastAPI
 
-from app.api import health, opportunities
+from app.api import ask, health, opportunities
 from app.db import init_db
 
 logging.basicConfig(
@@ -28,6 +28,7 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(opportunities.router)
+app.include_router(ask.router)
 
 
 @app.on_event("startup")
