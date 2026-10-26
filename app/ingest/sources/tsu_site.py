@@ -208,8 +208,16 @@ class TsuSiteSource(BaseSource):
             # Разделы-списки сами по себе не карточки материалов.
             if parts[-1] in LISTING_SLUGS:
                 continue
+            # Двусегментные пути вида «раздел/карточка» (news.tsu.ru):
+            # /calendar-of-events/den-otkrytyh-dverey-2026/, /news/<slug>.
+            two_segment_article = (
+                len(parts) == 2
+                and parts[0] in ARTICLE_SECTIONS
+                and re.fullmatch(r"[a-z0-9_-]{8,}", parts[1]) is not None
+            )
             looks_like_article = (
                 len(parts) == 1 and re.fullmatch(r"[a-z0-9_-]{4,40}", parts[0]) is not None
+                or two_segment_article
                 or len(parts) >= 3
                 and (parts[0] in ARTICLE_SECTIONS
                      or any(seg.isdigit() and len(seg) == 4 for seg in parts[1:]))
