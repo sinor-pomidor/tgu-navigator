@@ -43,13 +43,56 @@ def normalize_database_url(url: str) -> str:
     return url
 
 
-engine: Engine = create_engine(
-    normalize_database_url(settings.database_url),
-    pool_pre_ping=True,
-    echo=False,
-)
+#: Глобальные engine/SessionLocal создаются лениво (см. get_engine()),
+#: чтобы тесты могли подменить DATABASE_URL на изолированную базу до
+#: первого обращения к слою доступа к данным.
+_engine: Engine | None = None
+_SessionLocal: sessionmaker[Session] | None = None
 
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+def get_engine() -> Engine:
+    """Возвращает singleton движка SQLAlchemy (ленивое создание).
+
+    Движок создаётся при первом обращении — после загрузки конфигурации,
+    что позволяет окружению (в т.ч. ``DATABASE_URL`` в тестах) полностью
+    определить строку подключения.
+
+    Returns:
+        Активный ``Engine`` приложения.
+    """
+    global _engine
+    if _engine is None:
+        _engine = create_engine(
+            normalize_database_url(get_settings().database_url),
+            pool_pre_ping=True,
+            echo=False,
+        )
+    return _engine
+
+
+def get_session_local() -> sessionmaker[Session]:
+    """Возвращает singleton фабрики сессий поверх ``get_engine()``."""
+    global _SessionLocal
+    if _SessionLocal is None:
+        _SessionLocal = sessionmaker(
+            bind=get_engine(), autocommit=False, autoflush=False
+        )
+    return _SessionLocal
+
+
+# Обратная совместимость: SessionLocal доступен как раньше — но фабрикой
+# он становится лениво; вызов SessionLocal() открывает сессию текущей базы.
+class _SessionLocalProxy(sessionmaker[Session]):
+    """Прокси ``SessionLocal``: прокидывает вызовы в ленивую фабрику."""
+
+    def __call__(self, **kwargs):  # type: ignore[override]
+        return get_session_local()(**kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(get_session_local(), name)
+
+
+SessionLocal = _SessionLocalProxy()
 
 
 def init_db() -> None:
@@ -61,9 +104,10 @@ def init_db() -> None:
     при его отсутствии приложение продолжает работу без них.
     """
     # Расширения, необходимые для гибридного поиска (см. Задачу 5).
+    eng = get_engine()
     for extension in ("pg_trgm",):
         try:
-            with engine.begin() as conn:
+            with eng.begin() as conn:
                 conn.execute(text(f"CREATE EXTENSION IF NOT EXISTS {extension}"))
             logger.info("Расширение %s проверено/подключено", extension)
         except Exception:  # noqa: BLE001 - прототип: деградируем мягко
@@ -73,14 +117,14 @@ def init_db() -> None:
                 exc_info=True,
             )
 
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=eng)
     logger.info("Схема базы данных инициализирована (create_all)")
 
 
 @contextmanager
 def session_scope() -> Generator[Session, None, None]:
     """Контекстный менеджер сессии: коммитит при успехе, откатывает при ошибке."""
-    session = SessionLocal()
+    session = get_session_local()()
     try:
         yield session
         session.commit()
@@ -93,7 +137,7 @@ def session_scope() -> Generator[Session, None, None]:
 
 def get_db() -> Generator[Session, None, None]:
     """Зависимость FastAPI: выдаёт сессию БД на время обработки запроса."""
-    db = SessionLocal()
+    db = get_session_local()()
     try:
         yield db
     finally:
