@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ТГУ: Навигатор возможностей — MVP</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo-mark">✦</div>
+    <div>
+      <div class="header-title">ТГУ: Навигатор возможностей</div>
+      <div class="header-sub">Персональный ИИ-ассистент</div>
+    </div>
+  </div>
+  <div class="header-badge">🎓 MVP · Пилот</div>
+</div>
+
+<!-- APP -->
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="profile-card">
+      <div class="avatar">АТ</div>
+      <div class="profile-name">Арина Тринёва</div>
+      <div class="profile-info">Инноватика · 2 курс<br>ИИ, Data Science, стартапы</div>
+      <div class="interests">
+        <span class="interest-tag">🤖 ИИ</span>
+        <span class="interest-tag">📊 Data Science</span>
+        <span class="interest-tag">🚀 Стартапы</span>
+        <span class="interest-tag">🔬 NLP</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Быстрые запросы</h3>
+      <div class="quick-links">
+        <button class="quick-link" data-preset="projects"><span class="icon">🔬</span> Научные проекты</button>
+        <button class="quick-link" data-preset="grants"><span class="icon">💰</span> Гранты и стипендии</button>
+        <button class="quick-link" data-preset="events"><span class="icon">📅</span> Мероприятия</button>
+        <button class="quick-link" data-preset="labs"><span class="icon">🏛️</span> Лаборатории</button>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Статистика пилота</h3>
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-num" id="statQueries">0</div>
+          <div class="stat-label">Запросов</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num" id="statCards">0</div>
+          <div class="stat-label">Рекомендаций</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    <!-- FLOW INDICATOR -->
+    <div class="flow-indicator">
+      <div class="flow-step active" id="fs1"><div class="flow-dot">1</div> Запрос</div>
+      <div class="flow-line" id="fl1"></div>
+      <div class="flow-step" id="fs2"><div class="flow-dot">2</div> Поиск</div>
+      <div class="flow-line" id="fl2"></div>
+      <div class="flow-step" id="fs3"><div class="flow-dot">3</div> Рекомендации</div>
+      <div class="flow-line" id="fl3"></div>
+      <div class="flow-step" id="fs4"><div class="flow-dot">4</div> Действие</div>
+    </div>
+
+    <!-- CHAT -->
+    <div class="chat-area" id="chatArea">
+      <div class="welcome" id="welcomeScreen">
+        <div class="welcome-icon">✦</div>
+        <h2>Чем хочешь заниматься?</h2>
+        <p>Я — навигатор возможностей ТГУ. Расскажи о своих интересах, и я подберу подходящие проекты, лаборатории, гранты и мероприятия.</p>
+        <div class="feature-pills">
+          <div class="feature-pill">🔬 Научные проекты</div>
+          <div class="feature-pill">🏛️ Лаборатории</div>
+          <div class="feature-pill">💰 Гранты</div>
+          <div class="feature-pill">📅 Мероприятия</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INPUT -->
+    <div class="input-area">
+      <div class="suggestions" id="suggestions">
+        <button class="suggestion-chip" data-preset="custom">«Я учусь на Инноватике, интересуюсь ИИ...»</button>
+        <button class="suggestion-chip" data-preset="grants">Какие гранты доступны?</button>
+        <button class="suggestion-chip" data-preset="events">Ближайшие хакатоны</button>
+        <button class="suggestion-chip" data-preset="labs">Лаборатории с NLP</button>
+      </div>
+      <div class="input-row">
+        <input class="input-field" id="userInput" type="text"
+               placeholder="Опишите свой интерес или вопрос…">
+        <button class="send-btn" id="sendBtn">➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modalBox">
+    <button class="modal-close" id="modalClose">✕</button>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
