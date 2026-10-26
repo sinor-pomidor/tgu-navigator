@@ -126,6 +126,10 @@ class Opportunity(OpportunityBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    origin: str
+    source: str
+    external_id: str | None = None
+    last_seen_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

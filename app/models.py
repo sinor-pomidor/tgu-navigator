@@ -43,6 +43,18 @@ class OpportunityStatus(str, enum.Enum):
     CLOSED = "closed"
 
 
+class OpportunityOrigin(str, enum.Enum):
+    """Источник происхождения записи каталога.
+
+    ``manual`` — заведена человеком (seed, CRUD API, импорт куратора);
+    ``parsed`` — собрана автоматическим конвейером ingestion.
+    Ручные записи конвейер не перезаписывает и не удаляет.
+    """
+
+    MANUAL = "manual"
+    PARSED = "parsed"
+
+
 class Opportunity(Base):
     """Запись каталога возможностей ТГУ."""
 
@@ -81,6 +93,29 @@ class Opportunity(Base):
     )
     contact: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="manual",
+        server_default=text("'manual'"),
+    )
+
+    # Поля конвейера сбора данных (ingestion).
+    origin: Mapped[OpportunityOrigin] = mapped_column(
+        Enum(
+            OpportunityOrigin,
+            name="opportunity_origin",
+            native_enum=False,
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        nullable=False,
+        default=OpportunityOrigin.MANUAL,
+        server_default=OpportunityOrigin.MANUAL.value,
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    external_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -113,6 +148,18 @@ class Opportunity(Base):
             "ix_opportunities_tags_gin",
             "tags",
             postgresql_using="gin",
+        ),
+        # Частичный уникальный индекс: external_id уникален в рамках
+        # источника (source) только для записей, собранных конвейером.
+        # Ручные записи (origin='manual') имеют external_id IS NULL и
+        # под правило не попадают — дедупликация кураторских записей
+        # остаётся на ответственности человека.
+        Index(
+            "uq_opportunities_source_external",
+            "source",
+            "external_id",
+            unique=True,
+            postgresql_where=text("origin = 'parsed' AND external_id IS NOT NULL"),
         ),
     )
 

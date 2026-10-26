@@ -19,7 +19,12 @@ from typing import Any
 from sqlalchemy import select
 
 from app.db import init_db, session_scope
-from app.models import Opportunity, OpportunityStatus, OpportunityType
+from app.models import (
+    Opportunity,
+    OpportunityOrigin,
+    OpportunityStatus,
+    OpportunityType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +88,18 @@ def build_opportunity(item: dict[str, Any]) -> Opportunity:
         status=OpportunityStatus(item.get("status", OpportunityStatus.OPEN.value)),
         contact=item.get("contact"),
         source_url=item["source_url"].strip(),
+        # Сид-каталог — это вручную подготовленные данные кураторов.
+        origin=OpportunityOrigin.MANUAL,
+        source="seed",
     )
 
 
 def seed_database(path: Path = DEFAULT_SEED_PATH) -> int:
-    """Перезагружает каталог из JSON-файла в базу данных.
+    """Перезагружает сид-каталог из JSON-файла в базу данных.
 
-    Таблица предварительно очищается, поэтому повторные запуски
+    Очищаются только записи с ``origin='manual'`` и ``source='seed'``,
+    поэтому собранные конвейером (``origin='parsed'``) и добавленные
+    через API ручные записи остаются нетронутыми. Повторные запуски
     не создают дублей.
 
     Args:
@@ -100,10 +110,12 @@ def seed_database(path: Path = DEFAULT_SEED_PATH) -> int:
     """
     records = load_records(path)
     with session_scope() as session:
-        # Полная перезагрузка: удаляем старые строки, вставляем новые.
-        # delete() выполняется сразу в БД — так добавленные в этом же
-        # транзакционном скоупе объекты не попадают под очистку.
-        session.query(Opportunity).delete()
+        # Точечная очистка старого сида: delete() выполняется сразу в БД,
+        # поэтому объекты, добавляемые в этой же транзакции, не удаляются.
+        session.query(Opportunity).filter(
+            Opportunity.origin == OpportunityOrigin.MANUAL,
+            Opportunity.source == "seed",
+        ).delete(synchronize_session=False)
 
         for item in records:
             session.add(build_opportunity(item))

@@ -21,3 +21,7 @@ httpx==0.28.1
 # Тесты
 pytest==8.4.1
 pytest-cov==7.1.0
+
+# Сбор данных с публичных страниц (ingestion)
+beautifulsoup4==4.12.3
+lxml==5.3.0
