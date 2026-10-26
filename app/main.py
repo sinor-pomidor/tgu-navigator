@@ -5,6 +5,8 @@
 """
 
 import logging
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 
@@ -17,6 +19,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """Жизненный цикл приложения: инициализация схемы БД на старте."""
+    init_db()
+    logger.info("Приложение «ТГУ: Навигатор возможностей» запущено")
+    yield
+
+
 app = FastAPI(
     title="ТГУ: Навигатор возможностей",
     description=(
@@ -24,15 +35,9 @@ app = FastAPI(
         "мероприятий и грантов на основе каталога проверенных возможностей."
     ),
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.include_router(health.router)
 app.include_router(opportunities.router)
 app.include_router(ask.router)
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    """Событие запуска: инициализация схемы БД и логирование старта."""
-    init_db()
-    logger.info("Приложение «ТГУ: Навигатор возможностей» запущено")
