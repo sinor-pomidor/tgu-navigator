@@ -7,11 +7,16 @@
 import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api import ask, health, opportunities
 from app.db import init_db
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,3 +46,20 @@ app = FastAPI(
 app.include_router(health.router)
 app.include_router(opportunities.router)
 app.include_router(ask.router)
+
+# CORS: чтобы фронтенд, открытый с другого адреса (например, file:// или
+# локальный статический сервер), мог обращаться к API. В прототипе — все
+# источники; на боевом окружении список следует сузить.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Статический MVP-фронтенд: frontend/index.html раздаётся по адресу "/"
+# (html=True возвращает index.html для запроса к директории). Монтируется
+# последним, чтобы не перекрывать /docs, /health, /ask и /opportunities.
+if FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

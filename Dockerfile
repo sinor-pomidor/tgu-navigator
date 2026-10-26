@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Код приложения и сид-каталог.
 COPY app ./app
 COPY seed ./seed
+COPY frontend ./frontend
 
 # Непривилегированный пользователь для запуска.
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \

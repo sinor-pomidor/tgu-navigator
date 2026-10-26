@@ -48,7 +48,8 @@ docker compose up --build -d
 # 3. Загрузить стартовый каталог возможностей
 docker compose exec app python -m app.seed
 
-# 4. Проверить: http://localhost:8000/docs (Swagger), http://localhost:8000/health
+# 4. Открыть интерфейс: http://localhost:8000/ (MVP-фронтенд)
+#    API-документация: http://localhost:8000/docs, проверка живости: /health
 curl -X POST http://localhost:8000/ask -H 'Content-Type: application/json' \
      -d '{"query": "хочу в проект по ИИ"}'
 ```
@@ -72,6 +73,10 @@ tgu-navigator/
 ├── Dockerfile                  # образ приложения
 ├── docker-compose.yml          # db (PostgreSQL+pgvector) + app (FastAPI)
 ├── seed/opportunities.json     # стартовый каталог возможностей ТГУ
+├── frontend/                   # MVP-фронтенд (статика, раздаётся с "/"):
+│   ├── index.html              #   структура страницы
+│   ├── style.css               #   стили
+│   └── app.js                  #   логика чата и вызовы /ask, /opportunities
 ├── app/
 │   ├── main.py                 # FastAPI-приложение, роутеры, lifespan
 │   ├── config.py               # Settings из переменных окружения
@@ -129,6 +134,7 @@ python -m app.bot.bot
 
 ## Основные эндпоинты
 
+- `GET /` — MVP-фронтенд (чат с подборками, вызывается `POST /ask`)
 - `GET /health` — проверка живости
 - `GET/POST /opportunities`, `GET/PUT/DELETE /opportunities/{id}` — CRUD каталога
 - `POST /ask {query}` — главный сценарий: поиск → подборка → структурированный
