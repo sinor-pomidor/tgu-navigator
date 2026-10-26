@@ -2,16 +2,12 @@
 
 Используются реальные приложение и БД (посадочные данные — сид-каталог),
 LLM-провайдер принудительно mock, поэтому тесты не требуют интернета.
-Созданные в тестах записи удаляются (fixture clean_created_ids).
+Созданные в тестах записи удаляются (фикстура cleanup_opportunity_ids из conftest).
 """
 
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
-
-from app.db import SessionLocal
-from app.models import Opportunity as OpportunityModel
 
 VALID_OPPORTUNITY = {
     "type": "project",
@@ -27,20 +23,8 @@ VALID_OPPORTUNITY = {
 }
 
 
-@pytest.fixture()
-def clean_created_ids() -> list[int]:
-    """Собирает id созданных записей и удаляет их после теста."""
-    created: list[int] = []
-    yield created
-    db = SessionLocal()
-    try:
-        for oid in created:
-            obj = db.get(OpportunityModel, oid)
-            if obj is not None:
-                db.delete(obj)
-        db.commit()
-    finally:
-        db.close()
+# Удаление созданных записей после теста обеспечивает фикстура
+# cleanup_opportunity_ids из conftest.py (независимость тестов).
 
 
 # ------------------------------ health ---------------------------------
@@ -83,13 +67,13 @@ def test_list_search_by_substring(client: TestClient) -> None:
     assert empty == []
 
 
-def test_get_create_update_delete_cycle(client: TestClient, clean_created_ids) -> None:
+def test_get_create_update_delete_cycle(client: TestClient, cleanup_opportunity_ids) -> None:
     # Создание → 201 и поля echoes.
     created = client.post("/opportunities", json=VALID_OPPORTUNITY)
     assert created.status_code == 201
     body = created.json()
     oid = body["id"]
-    clean_created_ids.append(oid)
+    cleanup_opportunity_ids.append(oid)
     assert body["title"] == VALID_OPPORTUNITY["title"]
     assert body["status"] == "open"
     assert body["created_at"] and body["updated_at"]
