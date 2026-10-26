@@ -3,6 +3,10 @@
 Модуль создаёт движок по ``DATABASE_URL`` из конфигурации, обеспечивает
 инициализацию схемы (``create_all``) на этапе прототипа и предоставляет
 зависимость FastAPI для получения сессии на один запрос.
+
+Строка подключения приводится к драйверу psycopg2: если в ``DATABASE_URL``
+указан другой драйвер (например, ``postgresql+asyncpg://``), он заменяется
+на ``postgresql+psycopg2://`` — проект использует синхронный SQLAlchemy.
 """
 
 import logging
@@ -20,8 +24,27 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+
+def normalize_database_url(url: str) -> str:
+    """Приводит схему драйвера строки подключения к psycopg2.
+
+    Args:
+        url: исходная строка подключения из конфигурации.
+
+    Returns:
+        Строка подключения с драйвером ``postgresql+psycopg2``.
+    """
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    if "+psycopg2" not in url and url.startswith("postgresql+"):
+        rest = url.split("://", 1)
+        scheme = rest[0].split("+", 1)[0]
+        return f"{scheme}+psycopg2://{rest[1]}"
+    return url
+
+
 engine: Engine = create_engine(
-    settings.database_url,
+    normalize_database_url(settings.database_url),
     pool_pre_ping=True,
     echo=False,
 )

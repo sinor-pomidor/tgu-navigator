@@ -1,5 +1,6 @@
 # Инфраструктура прототипа «ТГУ: Навигатор возможностей».
-# Сервис db — PostgreSQL 16 с расширениями pgvector и pg_trgm.
+# Сервисы: db — PostgreSQL 16 с pgvector/pg_trgm; app — FastAPI (порт 8000).
+# Запуск одной командой: docker compose up --build
 
 services:
   db:
@@ -19,6 +20,23 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  app:
+    build: .
+    container_name: tgu-navigator-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://navigator:navigator@db:5432/navigator
+      LLM_PROVIDER: mock
+      APP_ENV: production
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8000:8000"
 
 volumes:
   pgdata:
