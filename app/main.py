@@ -9,6 +9,7 @@ import logging
 from fastapi import FastAPI
 
 from app.api import health
+from app.db import init_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,5 +31,6 @@ app.include_router(health.router)
 
 @app.on_event("startup")
 def on_startup() -> None:
-    """Служебное событие запуска: логируем старт приложения."""
+    """Событие запуска: инициализация схемы БД и логирование старта."""
+    init_db()
     logger.info("Приложение «ТГУ: Навигатор возможностей» запущено")
