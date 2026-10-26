@@ -128,3 +128,53 @@ class Opportunity(OpportunityBase):
     id: int
     created_at: datetime
     updated_at: datetime
+
+
+# --- Схемы сценария «запрос → подборка» (POST /ask), Задача 6 ---------
+
+
+class AskRequest(BaseModel):
+    """Тело запроса POST /ask — свободная формулировка студента."""
+
+    query: str = Field(min_length=1, max_length=500)
+
+    @field_validator("query")
+    @classmethod
+    def _strip_query(cls, value: str) -> str:
+        """Обрезает пробелы; пустой после обрезки запрос не принимается."""
+        value = value.strip()
+        if not value:
+            raise ValueError("запрос не может быть пустым")
+        return value
+
+
+class AskCard(BaseModel):
+    """Карточка возможности в ответе /ask (данные строго из каталога)."""
+
+    id: int
+    type: str
+    title: str
+    summary: str
+    requirements: str | None = None
+    deadline: str | None = None
+    contact: str | None = None
+    source_url: str
+    status: str
+
+
+class AskSource(BaseModel):
+    """Источник: название возможности и официальная ссылка."""
+
+    title: str
+    url: str
+
+
+class AskResponse(BaseModel):
+    """Структурированный ответ /ask; поле sources всегда присутствует."""
+
+    query: str
+    found: bool
+    intro: str
+    cards: list[AskCard] = Field(default_factory=list)
+    next_step: str = ""
+    sources: list[AskSource] = Field(default_factory=list)
