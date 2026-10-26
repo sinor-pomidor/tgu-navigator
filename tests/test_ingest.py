@@ -231,6 +231,7 @@ class TestUpsert:
         item = _item(title="Прошедшее событие", external_id="past-1",
                      deadline=date(2020, 1, 1))
         upsert_items(s, [item], "test_source")
+        s.flush()
         rec = s.scalar(select(Opportunity).where(Opportunity.external_id == "past-1"))
         assert rec.status == OpportunityStatus.CLOSED
         s.rollback()
@@ -239,8 +240,10 @@ class TestUpsert:
         s, _ = session
         item = _item(title="Устаревшая карточка", external_id="stale-1")
         upsert_items(s, [item], "test_source")
+        s.flush()
         rec = s.scalar(select(Opportunity).where(Opportunity.external_id == "stale-1"))
         rec.last_seen_at = datetime.now(timezone.utc) - timedelta(days=60)
+        s.flush()  # «просрочка» должна уйти в БД до SQL-запроса hygiene
         closed = close_stale_parsed(s, "test_source", stale_days=45)
         assert closed >= 1
         assert rec.status == OpportunityStatus.CLOSED
