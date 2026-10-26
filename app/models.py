@@ -50,8 +50,14 @@ class Opportunity(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
+    # values_callable: в БД храним значения enum ('open'), а не имена ('OPEN').
     type: Mapped[OpportunityType] = mapped_column(
-        Enum(OpportunityType, name="opportunity_type", native_enum=False),
+        Enum(
+            OpportunityType,
+            name="opportunity_type",
+            native_enum=False,
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -63,7 +69,12 @@ class Opportunity(Base):
     )
     deadline: Mapped[date | None] = mapped_column(DATE, nullable=True)
     status: Mapped[OpportunityStatus] = mapped_column(
-        Enum(OpportunityStatus, name="opportunity_status", native_enum=False),
+        Enum(
+            OpportunityStatus,
+            name="opportunity_status",
+            native_enum=False,
+            values_callable=lambda e: [m.value for m in e],
+        ),
         nullable=False,
         default=OpportunityStatus.OPEN,
         server_default=OpportunityStatus.OPEN.value,
