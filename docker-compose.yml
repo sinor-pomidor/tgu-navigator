@@ -1,0 +1,24 @@
+# Инфраструктура прототипа «ТГУ: Навигатор возможностей».
+# Сервис db — PostgreSQL 16 с расширениями pgvector и pg_trgm.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: tgu-navigator-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: navigator
+      POSTGRES_PASSWORD: navigator
+      POSTGRES_DB: navigator
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U navigator -d navigator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
