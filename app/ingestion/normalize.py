@@ -273,3 +273,47 @@ def close_stale_parsed(
     for record in stale:
         record.status = OpportunityStatus.CLOSED
     return len(stale)
+
+
+def refresh_statuses(session: Session, today: date | None = None) -> int:
+    """Автообновление статусов по дедлайну для всего каталога.
+
+    Проходит по всем незакрытым записям (любого origin, включая ручные и
+    seed-данные) и пересчитывает статус по актуальной дате: прошедший
+    дедлайн -> ``closed``, дедлайн в пределах 14 дней -> ``closing_soon``,
+    дальше -> ``open``. Записи без дедлайна не затрагиваются.
+
+    Вызывается на каждом прогоне конвейера (``app.ingestion.run``) и при
+    старте приложения, чтобы каталог не показывал просроченные возможности
+    как открытые.
+
+    Args:
+        session: активная сессия SQLAlchemy.
+        today: базовая дата (параметр для детерминированных тестов).
+
+    Returns:
+        Количество изменённых записей.
+    """
+    records = session.scalars(
+        select(Opportunity).where(
+            Opportunity.deadline.is_not(None),
+            Opportunity.status != OpportunityStatus.CLOSED,
+        )
+    ).all()
+    changed = 0
+    for record in records:
+        if today is not None and record.deadline is not None:
+            # Детерминированный режим для тестов: считаем от переданной даты.
+            if record.deadline < today:
+                new_status: OpportunityStatus = OpportunityStatus.CLOSED
+            elif (record.deadline - today).days <= 14:
+                new_status = OpportunityStatus.CLOSING_SOON
+            else:
+                new_status = OpportunityStatus.OPEN
+        else:
+            new_status = derive_status(record.deadline, record.status)
+        if new_status != record.status:
+            record.status = new_status
+            changed += 1
+    return changed
+

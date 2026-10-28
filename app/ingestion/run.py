@@ -24,7 +24,12 @@ from app.config import get_settings
 from app.db import init_db, session_scope
 from app.ingestion.base import BaseSource
 from app.ingestion.csv_import import CsvCuratorSource, import_manual_items
-from app.ingestion.normalize import IngestReport, close_stale_parsed, upsert_items
+from app.ingestion.normalize import (
+    IngestReport,
+    close_stale_parsed,
+    refresh_statuses,
+    upsert_items,
+)
 from app.ingestion.registry import SourceRegistry
 from app.ingestion.sources.tsu_site import TsuSiteSource
 from app.progress import progress_bar
@@ -145,6 +150,12 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("Запуск источника: %s", source.describe())
             result.reports.append(run_source(session, source, args.dry_run))
             bar.update(i)
+        # Автообновление статусов по дедлайну для всего каталога (включая
+        # ручные и seed-записи): прошедший дедлайн -> closed, близкий -> closing_soon.
+        changed = refresh_statuses(session)
+        logger.info("Автообновление статусов: изменено записей: %d", changed)
+        if args.dry_run:
+            session.rollback()
     bar.finish()
 
     result.print_summary()

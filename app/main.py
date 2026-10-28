@@ -46,6 +46,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     try:
         init_db()
         _ensure_catalog()
+        _refresh_deadline_statuses()
     except Exception:  # noqa: BLE001 - аварийное самовосстановление для exe
         if os.environ.get("TGU_BUNDLE") == "1":
             logger.warning("Первый старт не удался, пересоздаю локальную базу...")
@@ -54,8 +55,26 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             LOCAL_SQLITE_PATH.unlink(missing_ok=True)
             init_db()
         _ensure_catalog(force=True)
+        _refresh_deadline_statuses()
     logger.info("Приложение «ТГУ: Навигатор возможностей» запущено")
     yield
+
+
+def _refresh_deadline_statuses() -> None:
+    """Автообновление статусов по дедлайну при старте приложения.
+
+    Просроченные возможности (дедлайн прошёл) переводятся в ``closed``,
+    близкие к закрытию — в ``closing_soon``; поиск показывает только живые
+    записи, поэтому без этого шага каталог мог бы «застыть» в статусах,
+    записанных в seed/CSV вручную.
+    """
+    from app.db import session_scope
+    from app.ingestion.normalize import refresh_statuses
+
+    with session_scope() as session:
+        changed = refresh_statuses(session)
+    if changed:
+        logger.info("Автообновление статусов на старте: изменено %d", changed)
 
 
 def _ensure_catalog(force: bool = False) -> None:

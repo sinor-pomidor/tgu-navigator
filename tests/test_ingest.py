@@ -28,6 +28,7 @@ from app.ingestion.normalize import (
     close_stale_parsed,
     derive_status,
     normalize_title,
+    refresh_statuses,
     upsert_items,
     validate_item,
 )
@@ -361,6 +362,100 @@ class TestUpsert:
         assert closed >= 1
         assert rec.status == OpportunityStatus.CLOSED
         s.rollback()
+
+
+# --------------------- автообновление статусов (задача I6) ----------------
+
+
+class TestRefreshStatusesI6:
+    """Автообновление статусов по дедлайну для всего каталога."""
+
+    def test_past_deadline_manual_closes(self, session):
+        """Ручная запись с прошедшим дедлайном закрывается автоматически."""
+        s, _ = session
+        item = _item(
+            title="Просроченный мастер-класс",
+            external_id=None,
+            deadline=date(2020, 1, 1),
+        )
+        # имитируем ручную запись куратора: origin=manual, status=open
+        upsert_items(s, [item], "csv_import")
+        s.flush()
+        rec = s.scalar(
+            select(Opportunity).where(Opportunity.title == "Просроченный мастер-класс")
+        )
+        rec.origin = OpportunityOrigin.MANUAL
+        rec.status = OpportunityStatus.OPEN
+        s.flush()
+        changed = refresh_statuses(s, today=date(2026, 10, 29))
+        assert changed >= 1
+        assert rec.status == OpportunityStatus.CLOSED
+        s.rollback()
+
+    def test_near_deadline_becomes_closing_soon(self, session):
+        """До дедлайна ≤ 14 дней -> closing_soon; далеко -> open."""
+        s, _ = session
+        near = _item(title="Близкий дедлайн", external_id="near-1",
+                     deadline=date(2026, 11, 5))
+        far = _item(title="Дальний дедлайн", external_id="far-1",
+                    deadline=date(2027, 5, 5))
+        upsert_items(s, [near, far], "test_source")
+        s.flush()
+        for rec in s.scalars(select(Opportunity).where(
+            Opportunity.external_id.in_(["near-1", "far-1"])
+        )):
+            rec.status = OpportunityStatus.OPEN
+        s.flush()
+        refresh_statuses(s, today=date(2026, 10, 29))
+        statuses = {
+            r.external_id: r.status
+            for r in s.scalars(select(Opportunity).where(
+                Opportunity.external_id.in_(["near-1", "far-1"])
+            ))
+        }
+        assert statuses["near-1"] == OpportunityStatus.CLOSING_SOON
+        assert statuses["far-1"] == OpportunityStatus.OPEN
+        s.rollback()
+
+    def test_no_deadline_untouched(self, session):
+        """Записи без дедлайна автообновление не меняет."""
+        s, _ = session
+        item = _item(title="Бессрочный проект", external_id="nodeadline-1")
+        upsert_items(s, [item], "test_source")
+        s.flush()
+        rec = s.scalar(
+            select(Opportunity).where(Opportunity.external_id == "nodeadline-1")
+        )
+        before = rec.status
+        refresh_statuses(s, today=date(2026, 10, 29))
+        assert rec.status == before
+        s.rollback()
+
+    def test_run_pipeline_refreshes_statuses(self, tmp_path):
+        """Прогон конвейера (app.ingestion.run) обновляет статусы в БД."""
+        from app.ingestion import run as run_mod
+
+        csv = tmp_path / "events.csv"
+        # просрочку фиксируем относительно реальной «сегодня» — вчера
+        yesterday = date.today() - timedelta(days=1)
+        csv.write_text(
+            "title,description,deadline,contact,source_url,tags\n"
+            f"Прошедшая выставка,описание,{yesterday.isoformat()},ex@tsu.ru,"
+            "https://www.tsu.ru/past,выставки\n",
+            encoding="utf-8",
+        )
+        code = run_mod.main(["--source", "csv", "--csv-file", str(csv)])
+        assert code == 0
+        with get_session_local()() as check:
+            rec = check.scalar(
+                select(Opportunity).where(Opportunity.title == "Прошедшая выставка")
+            )
+            assert rec is not None
+            assert rec.status == OpportunityStatus.CLOSED
+            check.query(Opportunity).filter(
+                Opportunity.id == rec.id
+            ).delete(synchronize_session=False)
+            check.commit()
 
 
 # --------------------------- сайт ТГУ (без сети) -------------------------
