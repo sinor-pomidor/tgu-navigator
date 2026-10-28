@@ -9,6 +9,9 @@ dist/
 # Виртуальные окружения
 .venv/
 venv/
+.pyportable/
+.run-server.bat
+server.pid
 
 # Секреты и конфигурация окружения
 .env
