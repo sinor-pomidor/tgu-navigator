@@ -67,22 +67,41 @@ rem Step 2. Virtual environment + dependencies (first run takes 2-3 minutes)
 rem ---------------------------------------------------------------------------
 echo.
 echo [Step 2/4] Preparing environment (first run takes 2-3 minutes)...
+set "APP_PY=%PY%"
 if not exist ".venv\" (
-    "%PY%" -m venv .venv
-    if errorlevel 1 (
-        echo   [ERROR] Could not create virtual environment.
-        pause
-        exit /b 1
+    "%PY%" -m venv .venv > .venv-error.log 2>&1
+    if not exist ".venv\Scripts\python.exe" (
+        echo   [WARN] Virtual environment could not be created.
+        echo   Reason (last lines):
+        powershell -NoProfile -Command "Get-Content .venv-error.log -Tail 4"
+        echo   Falling back to user-level install (works fine, just less isolated).
+        rmdir /s /q .venv >nul 2>nul
+        del .venv-error.log >nul 2>nul
+        goto :userinstall
     )
+    del .venv-error.log >nul 2>nul
 )
-".venv\Scripts\python.exe" -m pip install --upgrade pip setuptools --quiet --disable-pip-version-check
-".venv\Scripts\python.exe" -m pip install -r requirements.txt --quiet --disable-pip-version-check
+set "APP_PY=.venv\Scripts\python.exe"
+"!APP_PY!" -m pip install --upgrade pip setuptools --quiet --disable-pip-version-check
+"!APP_PY!" -m pip install -r requirements.txt --quiet --disable-pip-version-check
+if errorlevel 1 goto :userinstall
+goto :env_ready
+
+:userinstall
+"%PY%" -m ensurepip --upgrade >nul 2>nul
+"%PY%" -m pip install --user -r requirements.txt --quiet --disable-pip-version-check
 if errorlevel 1 (
     echo   [ERROR] Could not install dependencies.
     echo   Check your internet connection and run this file again.
+    echo   If the message mentions "cl.exe" or "Microsoft Visual C++", your Python
+    echo   is probably older than 3.9. Install a newer one from python.org
+    echo   (tick "Add python.exe to PATH") and double-click run.bat again.
     pause
     exit /b 1
 )
+set "APP_PY=%PY%"
+
+:env_ready
 echo   [OK] Environment ready.
 
 rem ---------------------------------------------------------------------------
@@ -93,7 +112,7 @@ echo [Step 3/4] Starting server in a separate window...
 (
 echo @echo off
 echo cd /d "%%~dp0"
-echo ".venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+echo !APP_PY! -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ) > .run-server.bat
 start "TGU Navigator server" cmd /k .run-server.bat
 echo   [OK] Server is starting (log window opened separately).
