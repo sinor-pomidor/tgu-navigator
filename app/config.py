@@ -11,8 +11,22 @@ from pathlib import Path
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+def _bundle_root() -> Path | None:
+    """Каталог exe-сборки (onefile PyInstaller) или ``None`` для обычного запуска.
+
+    В onefile-режиме ``__file__`` указывает во временный каталог распаковки,
+    поэтому данные (база, .env) нужно хранить рядом с самим exe.
+    """
+    import sys
+
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return None
+
+
 #: Файл локальной базы для режима «без Docker» (создаётся автоматически).
-LOCAL_SQLITE_PATH = Path(__file__).resolve().parent.parent / "data" / "navigator.db"
+#: В .exe-сборке — рядом с exe, иначе — в ``data/`` внутри репозитория.
+LOCAL_SQLITE_PATH = (_bundle_root() or Path(__file__).resolve().parent.parent) / "data" / "navigator.db"
 
 
 def default_database_url() -> str:

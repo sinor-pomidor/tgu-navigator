@@ -44,3 +44,7 @@ data/
 *.db
 server.log
 server.pid
+
+# PyInstaller
+build/
+*.manifest
