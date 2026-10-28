@@ -38,9 +38,11 @@ if defined PY goto :py_ok
 
 echo   Python not found on this PC. Downloading portable Python...
 echo   (one-time download, about 25 MB, takes 1-3 minutes)
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; $ok=$false; foreach($tls in @('Tls12','Tls11','Tls')){ try{ [Net.ServicePointManager]::SecurityProtocol=$tls; Invoke-WebRequest -Uri 'https://github.com/indygreg/python-build-standalone/releases/download/20240814/cpython-3.11.9+20240814-x86_64-pc-windows-msvc-shared-install_only.tar.gz' -OutFile '%TEMP%\tgu-py.tar.gz' -UseBasicParsing; $ok=$true; break } catch {} }; if(-not $ok){ exit 1 }"
+echo   A progress bar is shown below: [====>                ] 17%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0.download-python.ps1"
 if errorlevel 1 goto :download_failed
 
+echo   Extracting files (a few seconds)...
 mkdir "%PORTABLE_DIR%" >nul 2>nul
 tar -xf "%TEMP%\tgu-py.tar.gz" -C "%PORTABLE_DIR%" --strip-components=1
 if not exist "%PORTABLE_PY%" goto :download_failed
@@ -68,7 +70,7 @@ rem ---------------------------------------------------------------------------
 echo.
 echo [Step 2/4] Preparing environment (first run takes 2-3 minutes)...
 set "APP_PY=%PY%"
-if not exist ".venv\" (
+if not exist ".venv\Scripts\python.exe" (
     "%PY%" -m venv .venv > .venv-error.log 2>&1
     if not exist ".venv\Scripts\python.exe" (
         echo   [WARN] Virtual environment could not be created.
@@ -82,14 +84,22 @@ if not exist ".venv\" (
     del .venv-error.log >nul 2>nul
 )
 set "APP_PY=.venv\Scripts\python.exe"
-"!APP_PY!" -m pip install --upgrade pip setuptools --quiet --disable-pip-version-check
-"!APP_PY!" -m pip install -r requirements.txt --quiet --disable-pip-version-check
-if errorlevel 1 goto :userinstall
+if not exist "!APP_PY!\Lib\site-packages\.tgu-deps-ok" (
+    echo   Installing packages, please wait (you will see progress below)...
+    "!APP_PY!" -m pip install --upgrade pip setuptools --disable-pip-version-check
+    if errorlevel 1 goto :userinstall
+    "!APP_PY!" -m pip install -r requirements.txt --disable-pip-version-check
+    if errorlevel 1 goto :userinstall
+    type nul > "!APP_PY!\Lib\site-packages\.tgu-deps-ok"
+) else (
+    echo   Packages already installed - skipping this step.
+)
 goto :env_ready
 
 :userinstall
 "%PY%" -m ensurepip --upgrade >nul 2>nul
-"%PY%" -m pip install --user -r requirements.txt --quiet --disable-pip-version-check
+echo   Installing packages, please wait (you will see progress below)...
+"%PY%" -m pip install --user -r requirements.txt --disable-pip-version-check
 if errorlevel 1 (
     echo   [ERROR] Could not install dependencies.
     echo   Check your internet connection and run this file again.
