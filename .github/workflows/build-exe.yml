@@ -40,22 +40,29 @@ jobs:
       - name: Быстрая проверка собранного exe
         shell: bash
         run: |
-          # Запускаем сервер на пару секунд: process должен остаться живым,
-          # /health должен ответить 200. Это ловит битые hiddenimports
-          # ещё до выкладывания файла в релиз.
+          # Запускаем сервер: /health должен ответить 200. Это ловит битые
+          # hiddenimports и проблемы консоли ещё до выкладывания файла в релиз.
+          # ВАЖНО: stdout/shim-логи пишем в ASCII — русские строки в Windows-
+          # консоли (cp1251) могут уронить PyInstaller-шим до старта сервера.
+          export PYTHONUTF8=1
           ./dist/TGU-Navigator.exe > launcher.log 2>&1 &
           PID=$!
-          for i in $(seq 1 60); do
+          OK=0
+          for i in $(seq 1 90); do
             if curl -s http://127.0.0.1:8000/health | grep -q '"status"'; then
-              echo "EXE OK: /health ответил"
-              kill $PID
-              exit 0
+              OK=1
+              break
             fi
             sleep 2
           done
           echo "--- launcher.log ---"
-          cat launcher.log
-          kill $PID
+          cat launcher.log || true
+          if [ "$OK" = "1" ]; then
+            echo "EXE OK: /health ответил"
+            kill //PID/$PID 2>/dev/null || taskkill //IM TGU-Navigator.exe //F 2>/dev/null || true
+            exit 0
+          fi
+          taskkill //IM TGU-Navigator.exe //F 2>/dev/null || true
           echo "EXE FAILED: /health не ответил"
           exit 1
 

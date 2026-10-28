@@ -33,6 +33,26 @@ HOST = "127.0.0.1"
 PORT = 8000
 
 
+def _reconfigure_console() -> None:
+    """Переключает консоль Windows в UTF-8.
+
+    Без этого ``print`` русских строк и псевдографики падает с
+    ``UnicodeEncodeError`` ('charmap' codec), когда stdout перенаправлен
+    в файл (cp1251/cp866 вместо OEM-кодировки консоли). Вызывается до
+    первого вывода; ошибки на не-Windows игнорируются.
+    """
+    if os.name == "nt":
+        try:
+            os.system("chcp 65001 >nul 2>&1")
+        except Exception:  # noqa: BLE001 - не критично
+            pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001 - stream может быть подменён
+            pass
+
+
 def bundle_dir() -> Path:
     """Каталог, в котором лежит exe (или репозиторий при запуске из исходников)."""
     if getattr(sys, "frozen", False):
@@ -79,6 +99,7 @@ def run_server() -> None:
 
 def main() -> int:
     """Основной поток launcher'а: окружение, сервер, браузер, цикл ожидания."""
+    _reconfigure_console()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
