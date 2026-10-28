@@ -1,0 +1,5 @@
+# Windows batch files: always CRLF in working dir and in archive, never mangle
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# Shell scripts: keep LF
+*.sh  text eol=lf
