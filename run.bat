@@ -43,9 +43,25 @@ if defined PY goto :py_ok
 echo   Python not found on this PC. Downloading portable Python...
 echo   (one-time download, about 25 MB, takes 1-3 minutes)
 echo   Live progress bar below shows real percent and speed:
+set "DL_OK="
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0download-python.ps1"
-if errorlevel 1 goto :download_failed
+if not errorlevel 1 set "DL_OK=ps1"
+if not defined DL_OK (
+    rem Fallback 1: curl.exe (shipped with Windows 10 1803+ and Windows 11)
+    echo   Trying fallback downloader 1 of 2 (curl)...
+    mkdir "%PORTABLE_DIR%" >nul 2>nul
+    curl -sS -L -o "%PORTABLE_DIR%\python-embed.zip" "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" >nul 2>nul
+    if not errorlevel 1 set "DL_OK=curl-zip"
+)
+if not defined DL_OK (
+    rem Fallback 2: BITS transfer via PowerShell cmdlet (no .NET types used)
+    echo   Trying fallback downloader 2 of 2 (BITS)...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Import-Module BitsTransfer -ErrorAction SilentlyContinue; Start-BitsTransfer -Source 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -Destination '%PORTABLE_DIR%\python-embed.zip'" >nul 2>nul
+    if not errorlevel 1 set "DL_OK=bits-zip"
+)
+if not defined DL_OK goto :download_failed
 
+if "%DL_OK:~-4%"=="_zip" goto :extract_zip
 call :bar_wait 20 "Extracting files"
 mkdir "%PORTABLE_DIR%" >nul 2>nul
 tar -xf "%TEMP%\tgu-py.tar.gz" -C "%PORTABLE_DIR%" --strip-components=1
@@ -55,8 +71,31 @@ set "PY=%PORTABLE_PY%"
 echo   [OK] Portable Python installed.
 goto :py_ok
 
+rem Embedded Python: plain zip, unpack with tar (built into Windows 10+),
+rem then enable pip by uncommenting "import site" in pythonNNN._pth.
+:extract_zip
+call :bar_wait 10 "Extracting files"
+tar -xf "%PORTABLE_DIR%\python-embed.zip" -C "%PORTABLE_DIR%"
+if not exist "%PORTABLE_PY%" goto :download_failed
+del "%PORTABLE_DIR%\python-embed.zip" >nul 2>nul
+for %%F in ("%PORTABLE_DIR%\python*._pth") do (
+    powershell -NoProfile -Command "(Get-Content '%%~fF') -replace '^#import site','import site' | Set-Content '%%~fF'"
+)
+"%PORTABLE_PY%" -c "import sys; print('  Python', sys.version.split()[0], 'embedded')" >nul 2>nul || goto :download_failed
+echo   Bootstrapping pip for embedded Python (get-pip.py)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py' -UseBasicParsing -TimeoutSec 60 } catch { exit 1 }" >nul 2>nul
+if errorlevel 1 goto :download_failed
+"%PORTABLE_PY%" "%TEMP%\get-pip.py" --disable-pip-version-check >nul 2>nul
+if errorlevel 1 goto :download_failed
+del "%TEMP%\get-pip.py" >nul 2>nul
+set "PY=%PORTABLE_PY%"
+echo   [OK] Portable Python installed.
+goto :py_ok
+
 :download_failed
 echo   [ERROR] Could not download Python automatically.
+echo   Possible reasons: no internet, proxy/firewall blocks downloads,
+echo   or the download server is temporarily unavailable.
 echo   Please install Python once manually:
 echo     1. Open https://www.python.org/downloads/
 echo     2. Run the installer and TICK the box "Add python.exe to PATH"
