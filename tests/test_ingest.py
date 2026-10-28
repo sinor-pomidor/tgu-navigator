@@ -8,28 +8,42 @@ hygiene и разбор страниц сайта ТГУ на фиксирова
 from __future__ import annotations
 
 import textwrap
+from collections.abc import Iterator
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
-from app.db import get_engine, get_session_local
-from app.ingest.base import BaseSource, RawItem, SourceRegistry
-from app.ingest.loaders import (
+from app.db import get_session_local
+from app.ingestion.base import BaseSource, RawItem
+from app.ingestion.csv_import import (
+    CsvCuratorSource,
+    import_csv_file,
+    parse_deadline,
+)
+from app.ingestion.csv_import import main as csv_main
+from app.ingestion.normalize import (
     close_stale_parsed,
     derive_status,
     normalize_title,
     upsert_items,
     validate_item,
 )
-from app.ingest.sources.csv_curator import CsvCuratorSource, parse_deadline
-from app.ingest.sources.tsu_site import TsuSiteSource, guess_type, parse_russian_date
+from app.ingestion.registry import SourceRegistry
+from app.ingestion.sources.tsu_site import TsuSiteSource, guess_type, parse_russian_date
 from app.migrations.add_origin_fields import STATEMENTS, migrate
-from app.models import Opportunity, OpportunityOrigin, OpportunityStatus
+from app.models import (
+    Opportunity,
+    OpportunityOrigin,
+    OpportunityStatus,
+    OpportunityType,
+)
 
 
 @pytest.fixture()
-def session():
+def session() -> Iterator[tuple[Session, list[int]]]:
     """Сессия БД; после теста удаляет созданные тестом parsed-записи."""
     s = get_session_local()()
     created_ids: list[int] = []
@@ -143,10 +157,13 @@ class TestPureHelpers:
 
 class TestCsvSource:
     def test_template_loads(self):
-        src = CsvCuratorSource("seed/curator_import_template.csv")
+        """Боевой шаблон кураторов seed/events_template.csv читается без ошибок."""
+        src = CsvCuratorSource("seed/events_template.csv")
         items = src.fetch()
-        assert len(items) == 2
+        assert len(items) == 4
+        assert not src.rejected_rows
         assert all(i.source_url.startswith("http") for i in items)
+        assert all(i.type == "event" for i in items)
         assert items[0].tags and isinstance(items[0].deadline, date)
 
     def test_missing_file_raises(self):
@@ -170,6 +187,102 @@ class TestCsvSource:
         )
         items = CsvCuratorSource(good).fetch()
         assert [i.title for i in items] == ["Есть"]
+
+
+# --------------------------- CSV-импорт (задача I5) -----------------------
+
+
+I5_CSV = textwrap.dedent(
+    """
+    title,description,deadline,contact,source_url,tags
+    Хакатон ИИ ТГУ,"Двухдневный хакатон для студентов всех направлений.",2027-03-01,ai@tsu.ru,https://www.tsu.ru/i5-hackathon,"ИИ; хакатон"
+    Митап по NLP,"Вечер разборов статей по обработке языка.",,nlp@tsu.ru,https://www.tsu.ru/i5-nlp,NLP; лингвистика
+    Конкурс «УМНИК»,"Грант до 250 тыс. руб. на студенческий проект.",2027-06-15,grants@tsu.ru,https://www.tsu.ru/i5-umnik,гранты; исследования
+    Сломанная строка без ссылки,"Эта строка обязана быть отклонена.",,bad@tsu.ru,,битый
+    """
+).lstrip()
+
+
+def _csv_import_rows(s: Session) -> list[Opportunity]:
+    """Все записи импорта кураторов (source='csv_import') в текущей сессии."""
+    return s.scalars(
+        select(Opportunity).where(Opportunity.source == "csv_import")
+    ).all()
+
+
+class TestCsvImportI5:
+    def test_three_valid_one_broken(self):
+        """Акцепт I5: 3 валидные строки добавлены, 1 битая — в отчёте об ошибках."""
+        with get_session_local()() as s:
+            csv_file = Path(__file__).resolve().parent / "_fixtures_i5.csv"
+            csv_file.write_text(I5_CSV, encoding="utf-8")
+            try:
+                report = import_csv_file(s, csv_file)
+                assert report.imported_manual == 3
+                assert report.rejected == 1
+                assert len(report.errors) == 1
+                assert "source_url" in report.errors[0]
+
+                rows = _csv_import_rows(s)
+                assert len(rows) == 3
+                # Импортированные строки — кураторские (manual): конвейер их не трогает.
+                assert all(r.origin == OpportunityOrigin.MANUAL for r in rows)
+                assert all(r.type == OpportunityType.EVENT for r in rows)
+                by_title = {r.title: r for r in rows}
+                assert by_title["Хакатон ИИ ТГУ"].tags == ["ИИ", "хакатон"]
+                assert by_title["Хакатон ИИ ТГУ"].deadline == date(2027, 3, 1)
+                assert by_title["Митап по NLP"].deadline is None
+                assert by_title["Митап по NLP"].status == OpportunityStatus.OPEN
+            finally:
+                ids = [o.id for o in _csv_import_rows(s)]
+                if ids:
+                    s.query(Opportunity).filter(
+                        Opportunity.id.in_(ids)
+                    ).delete(synchronize_session=False)
+                s.commit()
+                csv_file.unlink(missing_ok=True)
+
+    def test_reimport_updates_instead_of_duplicating(self):
+        """Повторный импорт того же файла обновляет карточки, а не плодит дубли."""
+        with get_session_local()() as s:
+            csv_file = Path(__file__).resolve().parent / "_fixtures_i5_re.csv"
+            csv_file.write_text(I5_CSV, encoding="utf-8")
+            try:
+                first = import_csv_file(s, csv_file)
+                s.commit()
+                assert first.imported_manual == 3
+                second = import_csv_file(s, csv_file)
+                assert second.imported_manual == 0
+                assert second.updated == 3
+                assert len(_csv_import_rows(s)) == 3
+            finally:
+                ids = [o.id for o in _csv_import_rows(s)]
+                if ids:
+                    s.query(Opportunity).filter(
+                        Opportunity.id.in_(ids)
+                    ).delete(synchronize_session=False)
+                s.commit()
+                csv_file.unlink(missing_ok=True)
+
+    def test_cli_main_returns_zero(self, tmp_path: Path):
+        """CLI python -m app.ingestion.csv_import не падает на файле с битой строкой."""
+        csv_file = tmp_path / "cli_events.csv"
+        csv_file.write_text(I5_CSV, encoding="utf-8")
+        assert csv_main([str(csv_file)]) == 0
+        with get_session_local()() as s:
+            ids = [o.id for o in _csv_import_rows(s)]
+            try:
+                assert len(ids) == 3
+            finally:
+                if ids:
+                    s.query(Opportunity).filter(
+                        Opportunity.id.in_(ids)
+                    ).delete(synchronize_session=False)
+                    s.commit()
+
+    def test_cli_missing_file_returns_two(self, tmp_path: Path):
+        """Отсутствующий файл — понятная ошибка и код возврата 2."""
+        assert csv_main([str(tmp_path / "nope.csv")]) == 2
 
 
 # --------------------------- загрузчик -----------------------------------

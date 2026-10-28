@@ -62,6 +62,30 @@ pkg_progress() {
 }
 
 # ---------------------------------------------------------------------------
+# bar_wait_until <PID> <max_sec> <label> - анимированный прогресс-бар,
+# пока фоновый процесс с указанным PID живёт (или пока не истечёт max_sec).
+# ---------------------------------------------------------------------------
+bar_wait_until() {
+    local pid="$1" max="$2" label="${3:-Работа}"
+    local n=0 width=30
+    while kill -0 "$pid" 2>/dev/null && [ "$n" -lt "$max" ]; do
+        local pct=$(( n * 100 / max ))
+        [ "$pct" -gt 97 ] && pct=97
+        local filled=$(( pct * width / 100 ))
+        local bar=""
+        for ((i=0;i<width;i++)); do
+            if [ "$i" -lt "$filled" ]; then bar="${bar}#"; else bar="${bar}-"; fi
+        done
+        printf "\r    [%s] %3d%%  %s (%ds)" "$bar" "$pct" "$label" "$n"
+        sleep 1
+        n=$(( n + 1 ))
+    done
+    local full_bar=""
+    for ((i=0;i<width;i++)); do full_bar="${full_bar}#"; done
+    printf "\r    [%s] 100%%  %s\n" "$full_bar" "$label"
+}
+
+# ---------------------------------------------------------------------------
 # Шаг 1. Ищем Python 3.9+
 # ---------------------------------------------------------------------------
 echo
@@ -98,14 +122,18 @@ if [ ! -f ".venv/.tgu-deps-ok" ]; then
     echo "  Устанавливаем пакеты, это займёт пару минут. Прогресс ниже:"
     rm -f .pip-done.tmp
     python -m pip install --upgrade pip >/dev/null 2>&1 || true
+    # Реальный путь site-packages текущего venv (Python бывает 3.9/3.10/3.11/3.12+).
+    SITE_DIR="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null || echo "")"
+    [ -z "$SITE_DIR" ] && SITE_DIR=".venv/lib/python3.11/site-packages"
     ( pip install -r requirements.txt > .pip-install.log 2>&1 && touch .venv/.tgu-deps-ok; touch .pip-done.tmp ) &
     PK_PID=$!
-    pkg_progress ".venv/lib/python3.11/site-packages" ".pip-done.tmp" "Установка пакетов"
+    pkg_progress "$SITE_DIR" ".pip-done.tmp" "Установка пакетов"
     wait "$PK_PID" 2>/dev/null || true
     if [ ! -f ".venv/.tgu-deps-ok" ]; then
         echo "    Последние строки вывода pip:"
         tail -n 15 .pip-install.log || true
-        fail "Не удалось установить зависимости. Проверь интернет и запусти снова."
+        echo "    [ОШИБКА] Не удалось установить зависимости. Проверь интернет и запусти снова."
+        exit 1
     fi
     rm -f .pip-done.tmp .pip-install.log
 else
@@ -128,20 +156,17 @@ echo "  [OK] Сервер запущен (PID $SERVER_PID, логи в server.lo
 # ---------------------------------------------------------------------------
 echo
 echo "[Шаг 4/4] Ожидание запуска..."
-for i in $(seq 1 20); do
-    if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
-        break
-    fi
-    pct=$(( i * 100 / 20 ))
-    filled=$(( pct * 20 / 100 ))
-    bar=""
-    for ((j=0;j<20;j++)); do
-        if [ "$j" -lt "$filled" ]; then bar="${bar}#"; else bar="${bar}-"; fi
+api_up() {
+    for _ in $(seq 1 20); do
+        curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1 && return 0
+        sleep 1
     done
-    printf "\r    [%s] %3d%%  Подъём сервера" "$bar" "$pct"
-    sleep 1
-done
-printf "\r    [%s] 100%%  Подъём сервера\n" "####################"
+    return 1
+}
+api_up &
+API_PID=$!
+bar_wait_until "$API_PID" 25 "Подъём сервера"
+wait "$API_PID" 2>/dev/null || true
 
 if command -v open >/dev/null 2>&1; then
     open http://localhost:8000/          # macOS

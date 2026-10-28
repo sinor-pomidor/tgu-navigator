@@ -20,6 +20,7 @@ import logging
 from sqlalchemy import text
 
 from app.db import get_engine, session_scope
+from app.progress import progress_bar
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +95,16 @@ def migrate() -> None:
     исходный набор statements. Метод идемпотентен для обеих СУБД.
     """
     engine = get_engine()
+    bar = progress_bar(len(STATEMENTS), "Миграция схемы")
     with engine.begin() as conn:
         if engine.dialect.name == "sqlite":
             _migrate_sqlite(conn)
+            bar.update(len(STATEMENTS))
         else:
-            for stmt in STATEMENTS:
+            for i, stmt in enumerate(STATEMENTS, start=1):
                 conn.execute(text(stmt))
+                bar.update(i)
+    bar.finish()
     logger.info("Миграция add_origin_fields применена (идемпотентно)")
 
 

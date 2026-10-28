@@ -83,6 +83,7 @@ def _ensure_test_database() -> None:
     url = make_url(get_settings().database_url)
     db_name = url.database or ""
     if url.get_backend_name() != "postgresql":
+        # SQLite: база — файл; убеждаемся, что каталог для него существует.
         _ensure_sqlite_parent(db_name)
         return
     if "test" not in db_name.lower():

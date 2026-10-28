@@ -88,23 +88,28 @@ ok "Контейнеры запущены"
 # Шаг 4. Ждём готовности API и загружаем каталог возможностей
 # ----------------------------------------------------------------------------
 say "Шаг 4/5: ожидание запуска и загрузка каталога"
-printf '    Ожидаю готовности сайта'
-for i in $(seq 1 60); do
-    if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
-        break
-    fi
-    printf '.'
-    sleep 2
-done
-echo ""
-if ! curl -sf http://localhost:8000/health >/dev/null 2>&1; then
+# Ждём подъёма API в фоновом цикле, а на переднем плане рисуем прогресс-бар.
+(
+    for i in $(seq 1 60); do
+        curl -sf http://localhost:8000/health >/dev/null 2>&1 && exit 0
+        sleep 2
+    done
+    exit 1
+) &
+API_PID=$!
+bar_wait_until "$API_PID" 130 "Ожидание сайта (макс ~120 c)"
+wait "$API_PID" 2>/dev/null && API_OK=1 || API_OK=0
+if [ "$API_OK" != "1" ]; then
     echo "    Последние строки лога приложения:"
     docker compose logs app --tail 20
     fail "Сайт не поднялся за 2 минуты. См. лог выше."
 fi
 ok "API отвечает: /health → {"status":"ok"}"
 
-docker compose exec -T app python -m app.seed
+say "Загрузка каталога возможностей (модуль app.seed показывает свой бар)"
+if ! docker compose exec -T -e FORCE_COLOR=1 app python -m app.seed; then
+    fail "Не удалось загрузить каталог возможностей."
+fi
 ok "Каталог возможностей загружен в базу"
 
 # ----------------------------------------------------------------------------

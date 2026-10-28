@@ -27,7 +27,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.config import get_settings
-from app.ingest.base import BaseSource, RawItem
+from app.ingestion.base import BaseSource, RawItem
 
 logger = logging.getLogger(__name__)
 

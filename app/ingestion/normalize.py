@@ -1,18 +1,23 @@
-"""Загрузчик конвейера: нормализация, валидация, upsert и hygiene.
+"""Нормализация «сырых» записей (RawItem) и загрузка их как Opportunity.
 
-Правила качества (см. ТЗ, раздел «Защита качества»):
+Правила качества конвейера (ТЗ, разделы 5–6):
 
 * Дедупликация: запись из источника идентифицируется парой
   ``(source, external_id)``; при отсутствии ``external_id`` — по
   нормализованному заголовку внутри источника. Повторный забор
   обновляет существующую parsed-запись, а не создаёт дубль.
 * Неприкосновенность ручных записей: записи с ``origin='manual'``
-  загрузчиком никогда не изменяются и не удаляются — даже если
+  автоматическим конвейером никогда не изменяются и не удаляются — даже если
   источник «принёс» похожий заголовок.
-* Даты: прошедший ``deadline`` автоматически переводит статус в
-  ``closed``; отсутствующий ``source_url`` — запись отбраковывается.
+* Без ``source_url`` запись в БД не попадает (валидация отбраковывает строку
+  с причиной в отчёте).
+* Статусы по дедлайну: прошедшая дата → ``closed``; ≤ 14 дней до дедлайна →
+  ``closing_soon``; иначе ``open``.
 * Hygiene: parsed-записи, давно не подтверждённые источником
   (``last_seen_at`` старше порога), закрываются автоматически.
+
+Модуль является каноническим домом этой логики; ``app.ingestion.normalize``
+импортирует её отсюда для обратной совместимости.
 """
 
 from __future__ import annotations
@@ -25,8 +30,9 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ingestion.base import RawItem
 from app.models import Opportunity, OpportunityOrigin, OpportunityStatus, OpportunityType
-from app.ingest.base import RawItem
+from app.progress import progress_bar
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +52,7 @@ def normalize_title(title: str) -> str:
     return cleaned.strip(" .—-:;")
 
 
-def _normalize_tags(tags: list[str]) -> list[str]:
+def normalize_tags(tags: list[str]) -> list[str]:
     """Убирает пустые теги и дубликаты (без учёта регистра), сохраняет порядок."""
     seen: set[str] = set()
     result: list[str] = []
@@ -62,6 +68,10 @@ def _normalize_tags(tags: list[str]) -> list[str]:
     return result
 
 
+#: Обратная совместимость: прежнее имя внутреннего хелпера.
+_normalize_tags = normalize_tags
+
+
 @dataclass
 class IngestReport:
     """Итоги одного прогона конвейера для одного источника."""
@@ -73,6 +83,8 @@ class IngestReport:
     skipped_manual: int = 0
     rejected: int = 0
     closed_stale: int = 0
+    #: Кураторские (manual) записи, добавленные CSV-импортом (см. csv_import).
+    imported_manual: int = 0
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -82,6 +94,7 @@ class IngestReport:
             f"получено={self.fetched}",
             f"создано={self.created}",
             f"обновлено={self.updated}",
+            f"импортировано(куратор)={self.imported_manual}",
             f"пропущено(ручные)={self.skipped_manual}",
             f"отбраковано={self.rejected}",
             f"закрыто(устаревшие)={self.closed_stale}",
@@ -107,7 +120,7 @@ def validate_item(item: RawItem) -> str | None:
 
 
 def upsert_items(session: Session, items: list[RawItem], source_name: str) -> IngestReport:
-    """Загружает список записей источника в таблицу opportunities.
+    """Загружает список записей автоматического источника в таблицу opportunities.
 
     Для каждой записи:
       1. Валидация — негодные отбраковываются с причиной в отчёте.
@@ -127,6 +140,7 @@ def upsert_items(session: Session, items: list[RawItem], source_name: str) -> In
         Отчёт о загрузке.
     """
     report = IngestReport(source_name=source_name, fetched=len(items))
+    bar = progress_bar(len(items), f"Загрузка «{source_name}»")
     now = datetime.now(timezone.utc)
 
     existing = session.scalars(
@@ -146,7 +160,8 @@ def upsert_items(session: Session, items: list[RawItem], source_name: str) -> In
         ).all()
     }
 
-    for item in items:
+    for idx, item in enumerate(items, start=1):
+        bar.update(idx - 1)
         reason = validate_item(item)
         if reason:
             report.rejected += 1
@@ -178,7 +193,7 @@ def upsert_items(session: Session, items: list[RawItem], source_name: str) -> In
             "description": (item.description or "").strip() or None,
             "requirements": (item.requirements or "").strip() or None,
             "audience": (item.audience or "").strip() or None,
-            "tags": _normalize_tags(item.tags),
+            "tags": normalize_tags(item.tags),
             "deadline": item.deadline,
             "contact": (item.contact or "").strip() or None,
             "source_url": item.source_url.strip(),
@@ -204,6 +219,8 @@ def upsert_items(session: Session, items: list[RawItem], source_name: str) -> In
                 by_external[item.external_id] = record
             report.created += 1
 
+    bar.update(len(items))
+    bar.finish()
     return report
 
 
