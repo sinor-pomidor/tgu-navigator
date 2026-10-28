@@ -8,17 +8,20 @@
 from __future__ import annotations
 
 import enum
+import json
 from datetime import date, datetime
 
 from sqlalchemy import (
+    JSON,
+    Date,
     DateTime,
     Enum,
     Index,
     Text,
+    TypeDecorator,
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, DATE
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -55,6 +58,34 @@ class OpportunityOrigin(str, enum.Enum):
     PARSED = "parsed"
 
 
+class JSONList(TypeDecorator):
+    """Список строк, хранимый в JSON.
+
+    Совместим с PostgreSQL (колонка json) и SQLite — поэтому одна и та же
+    модель работает и в docker-режиме (Postgres), и в режиме «без Docker»
+    (локальный файл SQLite). Пустая строка/None читаются как пустой список.
+    """
+
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        """Сериализует Python-список в JSON при записи."""
+        if value is None:
+            return "[]"
+        return json.dumps([str(v) for v in value], ensure_ascii=False)
+
+    def process_result_value(self, value, dialect):
+        """Десериализует JSON в Python-список при чтении."""
+        if value is None or value == "":
+            return []
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+        return [str(v) for v in parsed] if isinstance(parsed, list) else []
+
+
 class Opportunity(Base):
     """Запись каталога возможностей ТГУ."""
 
@@ -77,9 +108,9 @@ class Opportunity(Base):
     requirements: Mapped[str | None] = mapped_column(Text, nullable=True)
     audience: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str]] = mapped_column(
-        ARRAY(Text), nullable=False, default=list, server_default=text("'{}'")
+        JSONList(), nullable=False, default=list
     )
-    deadline: Mapped[date | None] = mapped_column(DATE, nullable=True)
+    deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[OpportunityStatus] = mapped_column(
         Enum(
             OpportunityStatus,
@@ -128,40 +159,52 @@ class Opportunity(Base):
     )
 
     __table_args__ = (
-        # GIN-индексы pg_trgm для полнотекстового поиска (Задача 5).
-        # Создаются только если расширение pg_trgm доступно в БД;
-        # при недоступности init_db логирует предупреждение и продолжает работу.
-        Index(
-            "ix_opportunities_title_trgm",
-            "title",
-            postgresql_using="gin",
-            postgresql_ops={"title": "gin_trgm_ops"},
-        ),
-        Index(
-            "ix_opportunities_description_trgm",
-            "description",
-            postgresql_using="gin",
-            postgresql_ops={"description": "gin_trgm_ops"},
-        ),
-        # GIN-индекс по массиву тегов.
-        Index(
-            "ix_opportunities_tags_gin",
-            "tags",
-            postgresql_using="gin",
-        ),
-        # Частичный уникальный индекс: external_id уникален в рамках
-        # источника (source) только для записей, собранных конвейером.
-        # Ручные записи (origin='manual') имеют external_id IS NULL и
-        # под правило не попадают — дедупликация кураторских записей
-        # остаётся на ответственности человека.
-        Index(
-            "uq_opportunities_source_external",
-            "source",
-            "external_id",
-            unique=True,
-            postgresql_where=text("origin = 'parsed' AND external_id IS NOT NULL"),
-        ),
+        # Индексы ускорения поиска. Специфичные для PostgreSQL конструкции
+        # (GIN + pg_trgm, частичные индексы) добавляются только на Postgres:
+        # на SQLite (режим запуска без Docker) они не поддерживаются, а их
+        # роль выполняет деградированный ILIKE-поиск. См. app/db.py.
     )
+
+    @classmethod
+    def postgres_only_indexes(cls) -> list[Index]:
+        """Индексы, создаваемые только на PostgreSQL (через init_db).
+
+        Returns:
+            Список объектов ``Index`` с DDL, специфичным для Postgres.
+        """
+        return [
+            # GIN-индексы pg_trgm для полнотекстового поиска (Задача 5).
+            Index(
+                "ix_opportunities_title_trgm",
+                cls.__table__.c.title,
+                postgresql_using="gin",
+                postgresql_ops={"title": "gin_trgm_ops"},
+            ),
+            Index(
+                "ix_opportunities_description_trgm",
+                cls.__table__.c.description,
+                postgresql_using="gin",
+                postgresql_ops={"description": "gin_trgm_ops"},
+            ),
+            # GIN-индекс по массиву тегов.
+            Index(
+                "ix_opportunities_tags_gin",
+                cls.__table__.c.tags,
+                postgresql_using="gin",
+            ),
+            # Частичный уникальный индекс: external_id уникален в рамках
+            # источника (source) только для записей, собранных конвейером.
+            # Ручные записи (origin='manual') имеют external_id IS NULL и
+            # под правило не попадают — дедупликация кураторских записей
+            # остаётся на ответственности человека.
+            Index(
+                "uq_opportunities_source_external",
+                cls.__table__.c.source,
+                cls.__table__.c.external_id,
+                unique=True,
+                postgresql_where=text("origin = 'parsed' AND external_id IS NOT NULL"),
+            ),
+        ]
 
     def __repr__(self) -> str:  # pragma: no cover - служебное представление
         return f"<Opportunity id={self.id} type={self.type.value} title={self.title!r}>"

@@ -20,16 +20,47 @@ import os
 from collections.abc import Iterator
 
 # --- Окружение тестов: изолированная база, mock-LLM, без токенов. ---------
-os.environ["DATABASE_URL"] = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+psycopg2://navigator:navigator@localhost:5432/tgu_test",
-)
+# По умолчанию — отдельная PostgreSQL-база ``tgu_test`` (полный pg_trgm-путь).
+# Если сервер недоступен (например, запуск без Docker), автоматически
+# используется изолированный SQLite-файл во временной директории — тесты
+# идут через деградированный поиск, но боевая/демо-база не трогается никогда.
+_DEFAULT_TEST_DB = "postgresql+psycopg2://navigator:navigator@localhost:5432/tgu_test"
+
+
+def _postgres_available(url: str) -> bool:
+    """Проверяет, поднят ли PostgreSQL по строке подключения."""
+    try:
+        import psycopg2
+
+        parsed = _make_url(url)
+        dsn = (
+            f"host={parsed.host} port={parsed.port} "
+            f"user={parsed.username} password={parsed.password or ''} "
+            f"dbname={parsed.database}"
+        )
+        conn = psycopg2.connect(dsn, connect_timeout=2)
+        conn.close()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or ""
+if not os.environ["DATABASE_URL"]:
+    if _postgres_available(_DEFAULT_TEST_DB):
+        os.environ["DATABASE_URL"] = _DEFAULT_TEST_DB
+    else:
+        import tempfile
+
+        _tmpdir = tempfile.mkdtemp(prefix="tgu_test_")
+        os.environ["DATABASE_URL"] = f"sqlite:///{_tmpdir}/tgu_test.db"
 os.environ["LLM_PROVIDER"] = "mock"
 os.environ["LLM_API_KEY"] = ""
 os.environ["TG_BOT_TOKEN"] = ""
 
 import psycopg2
 import pytest
+from sqlalchemy.engine import make_url as _make_url
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -51,6 +82,9 @@ def _ensure_test_database() -> None:
 
     url = make_url(get_settings().database_url)
     db_name = url.database or ""
+    if url.get_backend_name() != "postgresql":
+        _ensure_sqlite_parent(db_name)
+        return
     if "test" not in db_name.lower():
         raise RuntimeError(
             f"Тесты обязаны работать на отдельной базе, а настроена "
@@ -77,6 +111,15 @@ def _ensure_test_database() -> None:
         conn.close()
 
 
+def _ensure_sqlite_parent(path: str) -> None:
+    """Создаёт каталог для SQLite-файла тестовой базы, если нужно."""
+    from pathlib import Path
+
+    p = Path(path)
+    if p.parent and not p.parent.exists():
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def prepared_database() -> None:
     """Пересоздаёт схему тестовой базы и загружает сид-каталог на прогон."""
@@ -86,7 +129,10 @@ def prepared_database() -> None:
 
     engine = create_engine(get_settings().database_url, pool_pre_ping=True)
     with engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS opportunities CASCADE"))
+        if engine.dialect.name == "postgresql":
+            conn.execute(text("DROP TABLE IF EXISTS opportunities CASCADE"))
+        else:
+            conn.execute(text("DROP TABLE IF EXISTS opportunities"))
     engine.dispose()
 
     init_db()

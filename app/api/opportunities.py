@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import Text, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -26,6 +26,18 @@ from app.schemas import Opportunity, OpportunityCreate, OpportunityUpdate
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
+
+
+def _tags_text_condition(db: Session, pattern: str):
+    """Условие поиска подстроки по тегам, совместимое с Postgres и SQLite.
+
+    В PostgreSQL ``tags`` — массив (нужен array_to_string); в SQLite
+    (режим «без Docker») теги хранятся как JSON-текст — достаточно CAST.
+    """
+    dialect = db.get_bind().dialect.name
+    if dialect == "sqlite":
+        return cast(OpportunityModel.tags, Text).ilike(pattern)
+    return func.array_to_string(OpportunityModel.tags, " ").ilike(pattern)
 
 
 @router.get("", response_model=list[Opportunity])
@@ -54,8 +66,7 @@ def list_opportunities(
             or_(
                 OpportunityModel.title.ilike(pattern),
                 OpportunityModel.description.ilike(pattern),
-                # Массив тегов приводим к тексту для поиска подстроки.
-                func.array_to_string(OpportunityModel.tags, " ").ilike(pattern),
+                _tags_text_condition(db, pattern),
             )
         )
     stmt = stmt.order_by(OpportunityModel.id).limit(limit).offset(offset)
