@@ -103,7 +103,7 @@ if not exist "!APP_PY!\Lib\site-packages\.tgu-deps-ok" (
 ) else (
     echo   Packages already installed - skipping this step.
 )
-goto :env_ready
+goto :dbready
 
 :userinstall
 "%PY%" -m ensurepip --upgrade >nul 2>nul
@@ -114,7 +114,7 @@ start "" /b "%~f0" _pipuser
 call :pkgbar
 if exist .pip-ok (
     del .pip-ok .pip-fail .pip-step.log >nul 2>nul
-    goto :env_ready
+    goto :dbready
 )
 echo   [ERROR] Could not install dependencies.
 echo   Check your internet connection and run this file again.
@@ -123,6 +123,28 @@ echo   is probably older than 3.9. Install a newer one from python.org
 echo   (tick "Add python.exe to PATH") and double-click run.bat again.
 pause
 exit /b 1
+
+rem ---------------------------------------------------------------------------
+rem Database preparation: schema migration + catalog load, each shown with
+rem its own built-in progress bar (app.progress wraps the long command).
+rem Skipped when .tgu-db-ready marker exists (fast repeated launches).
+rem ---------------------------------------------------------------------------
+:dbready
+if exist ".venv\Lib\site-packages\.tgu-db-ready" goto :env_ready
+if exist ".tgu-user-db-ready" goto :env_ready
+echo   Preparing database: migrating schema...
+"!APP_PY!" -m app.progress --total 5 --label "Schema migration" --timeout 120 -- "!APP_PY!" -m app.migrations.add_origin_fields
+if errorlevel 1 echo   [WARN] Migration did not finish - the server will fix the schema at startup.
+echo   Loading opportunities catalog...
+"!APP_PY!" -m app.progress --total 20 --label "Catalog load" --timeout 180 -- "!APP_PY!" -m app.seed
+if errorlevel 1 echo   [WARN] Catalog was not loaded - the server will seed the DB at startup.
+type nul > ".tgu-db-ready.tmp"
+if exist ".venv\Lib\site-packages\.tgu-deps-ok" (
+    type nul > ".venv\Lib\site-packages\.tgu-db-ready"
+) else (
+    type nul > ".tgu-user-db-ready"
+)
+del ".tgu-db-ready.tmp" >nul 2>nul
 
 :env_ready
 echo   [OK] Environment ready.
@@ -147,13 +169,14 @@ echo.
 echo [Step 4/4] Waiting for the site to come up...
 set /a W_T=0
 :wloop
-set /a W_PCT=(W_T+1)*100/30
-if %W_PCT% gtr 100 set W_PCT=100
+set /a W_PCT=W_T*100/30
+if %W_PCT% gtr 97 set W_PCT=97
+powershell -NoProfile -Command "try { (Invoke-WebRequest -Uri http://127.0.0.1:8000/health -UseBasicParsing -TimeoutSec 1).StatusCode } catch { exit 1 }" >nul 2>nul
+if not errorlevel 1 set W_PCT=100
 set /a W_FILLED=W_PCT*30/100
 set "W_BAR="
 for /l %%i in (1,1,30) do if %%i leq %W_FILLED% (set "W_BAR=!W_BAR!#") else (set "W_BAR=!W_BAR!-")
 echo   [!W_BAR!] !W_PCT!%%
-powershell -NoProfile -Command "try { (Invoke-WebRequest -Uri http://127.0.0.1:8000/health -UseBasicParsing -TimeoutSec 1).StatusCode } catch { exit 1 }" >nul 2>nul
 if not errorlevel 1 goto wok
 set /a W_T+=1
 if %W_T% geq 30 goto wtimeout

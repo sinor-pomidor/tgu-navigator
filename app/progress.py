@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 import sys
 import time
 from typing import TextIO
@@ -88,3 +89,110 @@ class ProgressBar:
 def progress_bar(total: int, label: str = "", **kwargs: object) -> ProgressBar:
     """Создаёт :class:`ProgressBar` (функция-обёртка для читаемости вызовов)."""
     return ProgressBar(total, label, **kwargs)  # type: ignore[arg-type]
+
+
+def run_with_progress(
+    cmd: list[str],
+    total: int,
+    label: str,
+    *,
+    timeout: float | None = None,
+) -> int:
+    """Запускает дочерний процесс и показывает честный прогресс-бар.
+
+    Ориентир прогресса — число файлов в ``data/`` (SQLite-база): каждый
+    шаг долгих операций (миграция схемы, загрузка каталога) изменяет файл
+    базы, поэтому бар реально отражает ход работы. Если ориентир недоступен,
+    бар деградирует до анимации по времени.
+
+    Args:
+        cmd: команда запуска дочернего процесса (например ``[sys.executable, "-m", "app.seed"]``).
+        total: ожидаемое общее число «шагов» для процента.
+        label: подпись бара на русском.
+        timeout: максимальное время ожидания в секундах; по умолчанию без лимита.
+
+    Returns:
+        Код завершения дочернего процесса (124 — таймаут, 127 — процесс не найден).
+    """
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent
+    try:
+        from app.config import LOCAL_SQLITE_PATH as _DB_PATH
+
+        db_path = Path(_DB_PATH)
+    except Exception:  # pragma: no cover - конфиг может не импортироваться вне venv
+        db_path = root / "data" / "navigator.db"
+    bar = ProgressBar(total, label)
+    try:
+        proc = subprocess.Popen(cmd)
+    except OSError as exc:
+        print(f"    [ОШИБКА] не удалось запустить {cmd[0]}: {exc}", file=sys.stderr)
+        return 127
+    step = 0
+    last_mtime: float = -1.0
+    if db_path.exists():
+        last_mtime = db_path.stat().st_mtime
+    deadline = None if timeout is None else time.monotonic() + timeout
+    try:
+        while True:
+            rc_now = proc.poll()
+            done = step
+            if db_path.exists():
+                mtime = db_path.stat().st_mtime
+                if mtime > last_mtime:
+                    last_mtime = mtime
+                    step += 1
+            bar.update(min(done, total))
+            if rc_now is not None:
+                break
+            if deadline is not None and time.monotonic() > deadline:
+                proc.kill()
+                proc.wait()
+                print(
+                    f"\n    [ОШИБКА] работа превысила {int(timeout or 0)} c и прервана.",
+                    file=sys.stderr,
+                )
+                return 124
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                continue
+        rc = proc.returncode if proc.returncode is not None else 0
+    except KeyboardInterrupt:
+        proc.kill()
+        proc.wait()
+        print("\n    [ПРЕРВАНО] работа остановлена пользователем.", file=sys.stderr)
+        return 130
+    bar.update(total)
+    bar.finish()
+    return rc
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """CLI-точка входа ``python -m app.progress``.
+
+    Использование::
+
+        python -m app.progress --total 5 --label "Миграция" -- python -m app.migrations.add_origin_fields
+        python -m app.progress --total 20 --label "Каталог"   -- python -m app.seed
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="app.progress")
+    parser.add_argument("--total", type=int, default=1)
+    parser.add_argument("--label", default="Работа")
+    parser.add_argument("--timeout", type=float, default=None)
+    parser.add_argument("cmd", nargs=argparse.REMAINDER)
+    ns = parser.parse_args(argv)
+    cmd = list(ns.cmd)
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not cmd:
+        print("Нет команды после '--'.", file=sys.stderr)
+        return 2
+    return run_with_progress(cmd, ns.total, ns.label, timeout=ns.timeout)
+
+
+if __name__ == "__main__":
+    sys.exit(_main())

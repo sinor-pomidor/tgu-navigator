@@ -101,7 +101,7 @@ exit /b 1
 :healthok
 echo   [OK] API responds: /health - ok
 echo   Loading catalog into the database...
-docker compose exec -T app python -m app.seed
+docker compose exec -T app python -m app.progress --total 20 --label "Loading catalog" --timeout 180 -- python -m app.seed
 if errorlevel 1 (
     echo   [ERROR] Could not load the catalog.
     pause
