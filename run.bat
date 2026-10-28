@@ -1,49 +1,41 @@
 @echo off
 chcp 65001 >nul
 rem ============================================================================
-rem  ТГУ: Навигатор возможностей — запуск БЕЗ Docker (Windows)
-rem  Просто дважды кликни по этому файлу.
-rem  Скрипт проверит Python, создаст изолированное окружение, установит
-rem  зависимости, запустит сервер и откроет браузер на http://localhost:8000
+rem  TGU Navigator - simple launch WITHOUT Docker (Windows)
+rem  Just double-click this file.
 rem ============================================================================
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo.
 echo ============================================================
-echo   ТГУ: Навигатор возможностей — простой запуск (без Docker)
+echo   TGU Navigator - simple launch (no Docker needed)
 echo ============================================================
 
-rem ---------------------------------------------------------------------------
-rem Шаг 1. Ищем Python
-rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 1/4] Проверка Python...
+echo [Step 1/4] Checking Python...
 set "PY="
 where python >nul 2>nul && set "PY=python"
 if not defined PY (
     where py >nul 2>nul && set "PY=py -3"
 )
 if not defined PY (
-    echo   [ОШИБКА] Python не найден.
-    echo   Скачай и установи Python 3.11 или новее: https://www.python.org/downloads/
-    echo   ВАЖНО: при установке поставь галочку "Add python.exe to PATH".
-    echo   После установки запусти этот файл снова.
+    echo   [ERROR] Python not found.
+    echo   Install Python 3.11 or newer: https://www.python.org/downloads/
+    echo   IMPORTANT: tick "Add python.exe to PATH" during installation.
+    echo   Then run this file again.
     pause
     exit /b 1
 )
 %PY% --version
-echo   [OK] Python найден.
+echo   [OK] Python found.
 
-rem ---------------------------------------------------------------------------
-rem Шаг 2. Создаём изолированное окружение (первый запуск ~2-3 минуты)
-rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 2/4] Подготовка окружения...
+echo [Step 2/4] Preparing environment (first run takes 2-3 minutes)...
 if not exist ".venv\" (
     %PY% -m venv .venv
     if errorlevel 1 (
-        echo   [ОШИБКА] Не удалось создать виртуальное окружение.
+        echo   [ERROR] Could not create virtual environment.
         pause
         exit /b 1
     )
@@ -52,40 +44,42 @@ call ".venv\Scripts\activate.bat"
 python -m pip install --upgrade pip --quiet
 pip install -r requirements.txt --quiet
 if errorlevel 1 (
-    echo   [ОШИБКА] Не удалось установить зависимости.
-    echo   Проверь интернет-соединение и запусти этот файл снова.
+    echo   [ERROR] Could not install dependencies.
+    echo   Check your internet connection and run this file again.
     pause
     exit /b 1
 )
-echo   [OK] Окружение готово.
+echo   [OK] Environment ready.
 
-rem ---------------------------------------------------------------------------
-rem Шаг 3. Запускаем сервер в отдельном окне
-rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 3/4] Запуск сервера...
-start "TGU Navigator - сервер" cmd /k "cd /d "%~dp0" && call .venv\Scripts\activate.bat && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
-echo   [OK] Сервер запускается (окно с логами открыто отдельно).
+echo [Step 3/4] Starting server in a separate window...
+(
+echo @echo off
+echo cd /d "%~dp0"
+echo call ".venv\Scripts\activate.bat"
+echo python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+) > .run-server.bat
+start "TGU Navigator server" cmd /k .run-server.bat
+echo   [OK] Server is starting (log window opened separately).
 
-rem ---------------------------------------------------------------------------
-rem Шаг 4. Ждём готовности и открываем браузер
-rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 4/4] Ожидание запуска (несколько секунд)...
+echo [Step 4/4] Waiting for startup (a few seconds)...
 timeout /t 8 /nobreak >nul
 start "" http://localhost:8000/
 
 echo.
 echo ============================================================
-echo   ГОТОВО! Браузер должен открыть страницу навигатора.
-echo   Адрес: http://localhost:8000
+echo   DONE! The browser should open the Navigator page.
+echo   Address: http://localhost:8000
 echo.
-echo   Как пользоваться:
-echo     - пиши в поле внизу вопрос про проекты/гранты/мероприятия ТГУ
-echo     - если страница не открылась сама — зайди вручную по адресу выше
+echo   How to use:
+echo     - type a question about TGU projects/grants/events
+echo     - if the page did not open, go to the address above
 echo.
-echo   Чтобы ВЫКЛЮЧИТЬ проект: закрой чёрное окно "TGU Navigator - сервер".
-echo   Чтобы включить снова: просто дважды кликни по run.bat.
+echo   To STOP the project: close the black "TGU Navigator server" window.
+echo   To start again: just double-click run.bat.
 echo ============================================================
 echo.
 pause
+exit /b 0
+
