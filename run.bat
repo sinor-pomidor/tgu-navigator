@@ -132,12 +132,18 @@ rem ---------------------------------------------------------------------------
 :dbready
 if exist ".venv\Lib\site-packages\.tgu-db-ready" goto :env_ready
 if exist ".tgu-user-db-ready" goto :env_ready
-echo   Preparing database: migrating schema...
-"!APP_PY!" -m app.progress --total 5 --label "Schema migration" --timeout 120 -- "!APP_PY!" -m app.migrations.add_origin_fields
-if errorlevel 1 echo   [WARN] Migration did not finish - the server will fix the schema at startup.
-echo   Loading opportunities catalog...
-"!APP_PY!" -m app.progress --total 20 --label "Catalog load" --timeout 180 -- "!APP_PY!" -m app.seed
-if errorlevel 1 echo   [WARN] Catalog was not loaded - the server will seed the DB at startup.
+echo   Preparing database: migrating schema (bar below)...
+rem NOTE: no app.progress wrapper here - it spawns a nested python that may
+rem lose PYTHONPATH on portable Python and fail. The bar waits on the real
+rem command instead; failures are non-fatal (the server seeds at startup).
+start "" /b cmd /c ""!APP_PY!" -m app.migrations.add_origin_fields > .mig.log 2>&1 & echo %%ERRORLEVEL%%> .mig-code.tmp"
+call :migbar
+del .mig-code.tmp >nul 2>nul
+powershell -NoProfile -Command "if (Test-Path .mig.log) { Get-Content .mig.log -Tail 4 }" >nul 2>nul
+echo   Loading opportunities catalog (bar below)...
+start "" /b cmd /c ""!APP_PY!" -m app.seed > .seed.log 2>&1 & echo %%ERRORLEVEL%%> .seed-code.tmp"
+call :seedbar
+del .seed-code.tmp >nul 2>nul
 type nul > ".tgu-db-ready.tmp"
 if exist ".venv\Lib\site-packages\.tgu-deps-ok" (
     type nul > ".venv\Lib\site-packages\.tgu-db-ready"
@@ -246,6 +252,50 @@ set /a BW_N+=1
 if !BW_N! geq !BW_TOTAL! endlocal & exit /b 0
 timeout /t 1 /nobreak >nul
 goto bwloop
+
+rem ---------------------------------------------------------------------------
+rem :migbar - animated bar while schema migration runs in background
+rem (finishes when worker writes .mig-code.tmp, max ~120 sec).
+rem ---------------------------------------------------------------------------
+:migbar
+setlocal EnableExtensions EnableDelayedExpansion
+set /a MB_MAX=120
+set /a MB_N=0
+:mbloop
+set /a MB_PCT=MB_N*100/MB_MAX
+if !MB_PCT! gtr 97 set MB_PCT=97
+if exist .mig-code.tmp set MB_PCT=100
+set /a MB_FILLED=MB_PCT*30/100
+set "MB_BAR="
+for /l %%i in (1,1,30) do if %%i leq !MB_FILLED! (set "MB_BAR=!MB_BAR!#") else (set "MB_BAR=!MB_BAR!-")
+echo   [!MB_BAR!] !MB_PCT!%%  Schema migration (!MB_N! sec elapsed)
+if exist .mig-code.tmp endlocal & exit /b 0
+set /a MB_N+=1
+if !MB_N! geq !MB_MAX! endlocal & exit /b 0
+timeout /t 1 /nobreak >nul
+goto mbloop
+
+rem ---------------------------------------------------------------------------
+rem :seedbar - animated bar while catalog load runs in background
+rem (finishes when worker writes .seed-code.tmp, max ~180 sec).
+rem ---------------------------------------------------------------------------
+:seedbar
+setlocal EnableExtensions EnableDelayedExpansion
+set /a SB_MAX=180
+set /a SB_N=0
+:sbloop
+set /a SB_PCT=SB_N*100/SB_MAX
+if !SB_PCT! gtr 97 set SB_PCT=97
+if exist .seed-code.tmp set SB_PCT=100
+set /a SB_FILLED=SB_PCT*30/100
+set "SB_BAR="
+for /l %%i in (1,1,30) do if %%i leq !SB_FILLED! (set "SB_BAR=!SB_BAR!#") else (set "SB_BAR=!SB_BAR!-")
+echo   [!SB_BAR!] !SB_PCT!%%  Catalog load (!SB_N! sec elapsed)
+if exist .seed-code.tmp endlocal & exit /b 0
+set /a SB_N+=1
+if !SB_N! geq !SB_MAX! endlocal & exit /b 0
+timeout /t 1 /nobreak >nul
+goto sbloop
 
 rem ---------------------------------------------------------------------------
 rem Hidden workers: run this same file with _pip / _pipuser argument.

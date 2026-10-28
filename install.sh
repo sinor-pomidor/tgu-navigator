@@ -60,7 +60,12 @@ if [ -f .env ]; then
     ok ".env уже существует — оставляю как есть"
 else
     cp .env.example .env
-    ok "Создан .env из образца. Всё работает БЕЗ ключей (LLM_PROVIDER=mock)."
+    # Для docker-compose контейнер app обязан получать DATABASE_URL Postgres:
+    # без него приложение попытается открыть SQLite-файл, которого в образе нет.
+    if command -v sed >/dev/null 2>&1; then
+        sed -i.bak 's|^DATABASE_URL=$|DATABASE_URL=postgresql+psycopg2://navigator:navigator@db:5432/navigator|' .env && rm -f .env.bak
+    fi
+    ok "Создан .env из образца (DATABASE_URL для Docker прописан). Всё работает БЕЗ ключей (LLM_PROVIDER=mock)."
     warn "Если позже захочешь Telegram-бота или реальный ИИ — допиши токены в файл .env (открывается любым текстовым редактором)."
 fi
 
@@ -106,8 +111,17 @@ if [ "$API_OK" != "1" ]; then
 fi
 ok "API отвечает: /health → {"status":"ok"}"
 
-say "Загрузка каталога возможностей (модуль app.seed показывает свой бар)"
-if ! docker compose exec -T -e FORCE_COLOR=1 app python -m app.seed; then
+say "Загрузка каталога возможностей (с прогресс-баром)"
+rm -f .seed-code.tmp
+( docker compose exec -T app python -m app.seed > .seed.log 2>&1; echo $? > .seed-code.tmp ) &
+SEED_PID=$!
+bar_wait_until "$SEED_PID" 180 "Загрузка каталога"
+wait "$SEED_PID" 2>/dev/null || true
+SEED_CODE=$(cat .seed-code.tmp 2>/dev/null || echo 1)
+rm -f .seed-code.tmp
+if [ "$SEED_CODE" != "0" ]; then
+    echo "    Последние строки вывода:"
+    tail -n 15 .seed.log 2>/dev/null || true
     fail "Не удалось загрузить каталог возможностей."
 fi
 ok "Каталог возможностей загружен в базу"

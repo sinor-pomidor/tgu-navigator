@@ -11,6 +11,10 @@ cd "$(dirname "$0")"
 
 PID_FILE="server.pid"
 
+say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$1"; }
+ok()   { printf '    \033[1;32m✔ %s\033[0m\n' "$1"; }
+warn() { printf '    \033[1;33m⚠ %s\033[0m\n' "$1"; }
+
 # ---------------------------------------------------------------------------
 # Режим остановки: ./run.sh stop
 # ---------------------------------------------------------------------------
@@ -62,16 +66,29 @@ pkg_progress() {
 }
 
 # ---------------------------------------------------------------------------
-# py_progress <python-bin> <total> <label> <timeout_sec> -- <cmd...> -
-# запускает долгую python-команду через встроенный бар app.progress
-# (python -m app.progress) и ждёт её завершения. Возвращает код выхода.
-# Используется для шагов: миграция схемы, загрузка каталога.
+# run_step <max_sec> <label> <cmd...> - запускает долгую команду с
+# анимированным прогресс-баром в фоне; при ошибке печатает последние строки
+# лога и продолжает работу (не критично: сервер доведёт базу сам).
 # ---------------------------------------------------------------------------
-py_progress() {
-    local pybin="$1" total="$2" label="$3" timeout="${4:-300}"
-    shift 4  # пропускаем 4 параметра, оставшееся — команда после '--'
-    "$pybin" -m app.progress --total "$total" --label "$label" \
-        --timeout "$timeout" -- "$@"
+run_step() {
+    local max="$1" label="$2" logfile="$3"
+    shift 3
+    rm -f "$logfile"
+    ( "$@" >"$logfile" 2>&1; echo $? > "$logfile.code" ) &
+    local pid=$!
+    bar_wait_until "$pid" "$max" "$label"
+    wait "$pid" 2>/dev/null || true
+    local rc
+    rc=$(cat "$logfile.code" 2>/dev/null || echo 1)
+    rm -f "$logfile.code"
+    if [ "$rc" != "0" ]; then
+        warn "$label: не выполнено за отведённое время (не критично)."
+        echo "    Последние строки вывода:"
+        tail -n 8 "$logfile" 2>/dev/null | sed 's/^/      /' || true
+    else
+        ok "$label: выполнено"
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -159,12 +176,10 @@ echo "  [OK] Окружение готово."
 # ---------------------------------------------------------------------------
 if [ ! -f ".venv/.tgu-db-ready" ]; then
     echo "  Миграция схемы базы (прогресс ниже):"
-    py_progress python 5 "Миграция схемы" 120 -- \
-        python -m app.migrations.add_origin_fields \
-        || echo "  [!] Миграция не выполнена (не критично, сервер доведёт схему сам)."
+    run_step 120 "Миграция схемы" .migrate.log \
+        python -m app.migrations.add_origin_fields
     echo "  Загрузка каталога возможностей:"
-    py_progress python 20 "Загрузка каталога" 180 -- python -m app.seed \
-        || echo "  [!] Каталог не загружен (сервер попытается засидить базу при старте)."
+    run_step 180 "Загрузка каталога" .seed.log python -m app.seed
     touch ".venv/.tgu-db-ready"
 else
     echo "  База уже подготовлена - пропускаем миграцию и загрузку каталога."

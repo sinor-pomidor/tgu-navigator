@@ -46,7 +46,10 @@ if exist .env (
     echo   [OK] .env already exists - keeping it as is.
 ) else (
     copy .env.example .env >nul
-    echo   [OK] Created .env from the sample. Everything works WITHOUT keys.
+    rem The Docker app container MUST get a Postgres DATABASE_URL, otherwise
+    rem the app tries to open a SQLite file that does not exist inside image.
+    powershell -NoProfile -Command "(Get-Content .env) -replace '^DATABASE_URL=$','DATABASE_URL=postgresql+psycopg2://navigator:navigator@db:5432/navigator' | Set-Content .env" >nul 2>nul
+    echo   [OK] Created .env from the sample ^(Docker DATABASE_URL set^). Everything works WITHOUT keys.
     echo        For the Telegram bot later - put the token into .env.
 )
 
@@ -100,10 +103,20 @@ exit /b 1
 
 :healthok
 echo   [OK] API responds: /health - ok
-echo   Loading catalog into the database...
-docker compose exec -T app python -m app.progress --total 20 --label "Loading catalog" --timeout 180 -- python -m app.seed
-if errorlevel 1 (
-    echo   [ERROR] Could not load the catalog.
+echo   Loading catalog into the database (progress bar below)...
+rem NOTE: "docker compose exec" is NOT run through app.progress wrapper:
+rem nested subprocess inside the container would lose PYTHONPATH and fail.
+rem The bar here waits on the real docker process instead.
+start "" /b cmd /c "docker compose exec -T app python -m app.seed > .seed.log 2>&1 & echo %%ERRORLEVEL%%> .seed-code.tmp"
+call :seedbar
+set "SEED_FAIL=1"
+if exist .seed-code.tmp (
+    findstr /r "^0$" .seed-code.tmp >nul 2>nul && set "SEED_FAIL="
+)
+del .seed-code.tmp >nul 2>nul
+if defined SEED_FAIL (
+    echo   [ERROR] Could not load the catalog. Last lines of output:
+    powershell -NoProfile -Command "if (Test-Path .seed.log) { Get-Content .seed.log -Tail 15 }"
     pause
     exit /b 1
 )
@@ -158,3 +171,25 @@ set /a DC_N+=1
 if !DC_N! geq !DC_MAX! endlocal & exit /b 0
 timeout /t 1 /nobreak >nul
 goto dcloop
+
+rem ---------------------------------------------------------------------------
+rem :seedbar - animated progress bar while "docker compose exec ... app.seed"
+rem runs in background. Finishes when the worker writes .seed-code.tmp.
+rem ---------------------------------------------------------------------------
+:seedbar
+setlocal EnableExtensions EnableDelayedExpansion
+set /a SB_MAX=180
+set /a SB_N=0
+:sbloop
+set /a SB_PCT=SB_N*100/SB_MAX
+if !SB_PCT! gtr 97 set SB_PCT=97
+if exist .seed-code.tmp set SB_PCT=100
+set /a SB_FILLED=SB_PCT*30/100
+set "SB_BAR="
+for /l %%i in (1,1,30) do if %%i leq !SB_FILLED! (set "SB_BAR=!SB_BAR!#") else (set "SB_BAR=!SB_BAR!-")
+echo   [!SB_BAR!] !SB_PCT!%%  Loading catalog (!SB_N! sec elapsed)
+if exist .seed-code.tmp endlocal & exit /b 0
+set /a SB_N+=1
+if !SB_N! geq !SB_MAX! endlocal & exit /b 0
+timeout /t 1 /nobreak >nul
+goto sbloop

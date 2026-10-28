@@ -19,7 +19,7 @@ import logging
 
 from sqlalchemy import text
 
-from app.db import get_engine, session_scope
+from app.db import get_engine, init_db, session_scope
 from app.progress import progress_bar
 
 logger = logging.getLogger(__name__)
@@ -109,12 +109,26 @@ def migrate() -> None:
 
 
 def main() -> None:
-    """Точка входа ``python -m app.migrations.add_origin_fields``."""
+    """Точка входа ``python -m app.migrations.add_origin_fields``.
+
+    Перед миграцией убеждаемся, что схема существует (на чистой базе
+    ``ALTER TABLE`` без таблицы падает) — создаём её идемпотентным
+    ``init_db(seed_if_empty=False)``. Счёт записей выводим только если
+    таблица реально есть.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    # Чистая база: сначала разворачиваем схему, затем мигрируем.
+    init_db(seed_if_empty=False)
     migrate()
+    from sqlalchemy import inspect as sa_inspect
+
+    engine = get_engine()
+    if not sa_inspect(engine).has_table("opportunities"):
+        logger.info("Миграция завершена (таблица возможностей ещё не создана)")
+        return
     with session_scope() as session:
         total = session.execute(
             text("SELECT count(*) FROM opportunities")
