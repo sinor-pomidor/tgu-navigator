@@ -44,24 +44,38 @@ echo   Python not found on this PC. Downloading portable Python...
 echo   (one-time download, about 25 MB, takes 1-3 minutes)
 echo   Live progress bar below shows real percent and speed:
 set "DL_OK="
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0download-python.ps1"
-if not errorlevel 1 set "DL_OK=ps1"
-if not defined DL_OK (
-    rem Fallback 1: curl.exe (shipped with Windows 10 1803+ and Windows 11)
-    echo   Trying fallback downloader 1 of 2 (curl)...
-    mkdir "%PORTABLE_DIR%" >nul 2>nul
-    curl -sS -L -o "%PORTABLE_DIR%\python-embed.zip" "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" >nul 2>nul
+rem PRIMARY path: official embedded Python zip from python.org via curl.exe
+rem (shipped with Windows 10 1803+ / Windows 11). Small (~11 MB), fast,
+rem no PowerShell/.NET dependencies at all. This is the method that has
+rem always worked even on locked-down machines.
+echo   Method 1 of 3: curl + python.org embedded zip...
+mkdir "%PORTABLE_DIR%" >nul 2>nul
+where curl >nul 2>nul && (
+    curl --progress-bar -L --retry 2 --max-time 600 -o "%PORTABLE_DIR%\python-embed.zip" "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
     if not errorlevel 1 set "DL_OK=curl-zip"
 )
 if not defined DL_OK (
-    rem Fallback 2: BITS transfer via PowerShell cmdlet (no .NET types used)
-    echo   Trying fallback downloader 2 of 2 (BITS)...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Import-Module BitsTransfer -ErrorAction SilentlyContinue; Start-BitsTransfer -Source 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -Destination '%PORTABLE_DIR%\python-embed.zip'" >nul 2>nul
-    if not errorlevel 1 set "DL_OK=bits-zip"
+    rem Fallback 1: Invoke-WebRequest (works on every PS version, no .NET types)
+    echo   Method 2 of 3: PowerShell Invoke-WebRequest + python.org...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -OutFile '%PORTABLE_DIR%\python-embed.zip' -UseBasicParsing" >nul 2>nul
+    if not errorlevel 1 set "DL_OK=iwr-zip"
+)
+if not defined DL_OK (
+    rem Fallback 2: the old PS1 script (github mirror, HttpWebRequest progress bar)
+    echo   Method 3 of 3: mirrored download with custom progress bar...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0download-python.ps1"
+    if not errorlevel 1 set "DL_OK=ps1"
 )
 if not defined DL_OK goto :download_failed
 
-if "%DL_OK:~-4%"=="_zip" goto :extract_zip
+rem Every zip-based method lands here. tar.exe (built into Windows 10+)
+rem unpacks the official embedded Python zip. The ps1 fallback downloads
+rem a .tar.gz from a GitHub mirror instead, so pick the branch by DL_OK.
+if "%DL_OK%"=="ps1" goto :extract_targz
+goto :extract_zip
+
+:extract_targz
+rem python-build-standalone archive keeps everything under "python/".
 call :bar_wait 20 "Extracting files"
 mkdir "%PORTABLE_DIR%" >nul 2>nul
 tar -xf "%TEMP%\tgu-py.tar.gz" -C "%PORTABLE_DIR%" --strip-components=1
@@ -71,11 +85,16 @@ set "PY=%PORTABLE_PY%"
 echo   [OK] Portable Python installed.
 goto :py_ok
 
-rem Embedded Python: plain zip, unpack with tar (built into Windows 10+),
-rem then enable pip by uncommenting "import site" in pythonNNN._pth.
+rem Embedded Python: plain zip, unpack with tar (built into Windows 10+;
+rem bsdtar reads zips natively), then enable pip by uncommenting
+rem "import site" in pythonNNN._pth. If tar fails - try PowerShell Expand.
 :extract_zip
 call :bar_wait 10 "Extracting files"
-tar -xf "%PORTABLE_DIR%\python-embed.zip" -C "%PORTABLE_DIR%"
+tar -xf "%PORTABLE_DIR%\python-embed.zip" -C "%PORTABLE_DIR%" >nul 2>nul
+if not exist "%PORTABLE_PY%" (
+    echo   tar could not unpack, trying PowerShell Expand-Archive...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath '%PORTABLE_DIR%\python-embed.zip' -DestinationPath '%PORTABLE_DIR%' -Force } catch { exit 1 }" >nul 2>nul
+)
 if not exist "%PORTABLE_PY%" goto :download_failed
 del "%PORTABLE_DIR%\python-embed.zip" >nul 2>nul
 for %%F in ("%PORTABLE_DIR%\python*._pth") do (
@@ -83,11 +102,24 @@ for %%F in ("%PORTABLE_DIR%\python*._pth") do (
 )
 "%PORTABLE_PY%" -c "import sys; print('  Python', sys.version.split()[0], 'embedded')" >nul 2>nul || goto :download_failed
 echo   Bootstrapping pip for embedded Python (get-pip.py)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py' -UseBasicParsing -TimeoutSec 60 } catch { exit 1 }" >nul 2>nul
-if errorlevel 1 goto :download_failed
-"%PORTABLE_PY%" "%TEMP%\get-pip.py" --disable-pip-version-check >nul 2>nul
-if errorlevel 1 goto :download_failed
-del "%TEMP%\get-pip.py" >nul 2>nul
+set "GETPIP_OK="
+where curl >nul 2>nul && (
+    curl -sS -L --retry 2 --max-time 120 -o "%TEMP%\get-pip.py" "https://bootstrap.pypa.io/get-pip.py"
+    if not errorlevel 1 set "GETPIP_OK=1"
+)
+if not defined GETPIP_OK (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py' -UseBasicParsing -TimeoutSec 60 } catch { exit 1 }" >nul 2>nul
+    if not errorlevel 1 set "GETPIP_OK=1"
+)
+if not defined GETPIP_OK goto :download_failed
+"%PORTABLE_PY%" "%TEMP%\get-pip.py" --disable-pip-version-check > .pip-bootstrap.log 2>&1
+if errorlevel 1 (
+    echo   [WARN] get-pip.py failed, last log lines:
+    powershell -NoProfile -Command "Get-Content .pip-bootstrap.log -Tail 5"
+    del .pip-bootstrap.log >nul 2>nul
+    goto :download_failed
+)
+del .pip-bootstrap.log >nul 2>nul
 set "PY=%PORTABLE_PY%"
 echo   [OK] Portable Python installed.
 goto :py_ok
