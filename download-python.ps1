@@ -38,26 +38,32 @@ try {
     $buf = New-Object byte[] 65536
     $read = 0
     $cumulative = [int64]0
+    $lastPrint = [DateTime]::MinValue
     while (($read = $stream.Read($buf, 0, $buf.Length)) -gt 0) {
         $fs.Write($buf, 0, $read)
         $cumulative += $read
+        # redraw at most ~4 times per second so the bar is smooth, not flickery
+        $now = Get-Date
+        if (($now - $lastPrint).TotalMilliseconds -lt 250 -and $cumulative -lt $total) { continue }
+        $lastPrint = $now
         $pct = 0
         if ($total -gt 0) { $pct = [math]::Min(100, [int](100 * $cumulative / $total)) }
         $mb = [math]::Round($cumulative / 1MB, 1)
+        $secs = [math]::Max(0.1, ($now - $startTime).TotalSeconds)
+        $speed = [math]::Round($cumulative / 1MB / $secs, 1)
         $barLen = 30
         $filled = 0
         if ($total -gt 0) { $filled = [int]($barLen * $cumulative / $total); if ($filled -gt $barLen) { $filled = $barLen } }
-        else { $filled = [int]((Get-Date) - $startTime).TotalSeconds % ($barLen + 1) }
+        else { $filled = [int]$secs % ($barLen + 1) }
         $bar = ('#' * $filled).PadRight($barLen, '.')
         if ($total -gt 0) {
-            Write-Host ("  [" + $bar + "] " + $pct + "%  " + $mb + " MB of " + [math]::Round($total / 1MB, 1) + " MB") `
-                -NoNewline -ForegroundColor Cyan
-            Write-Host "`r" -NoNewline
+            $eta = [math]::Max(0, [int](($total - $cumulative) / 1MB / [math]::Max($speed, 0.1)))
+            $line = "  [" + $bar + "] " + $pct.ToString().PadLeft(3) + "%  " + $mb + "/" + [math]::Round($total / 1MB, 1) + " MB  " + $speed + " MB/s  eta " + $eta + "s"
         } else {
-            Write-Host ("  [" + $bar + "] " + $mb + " MB downloaded...") `
-                -NoNewline -ForegroundColor Cyan
-            Write-Host "`r" -NoNewline
+            $line = "  [" + $bar + "] " + $mb + " MB  " + $speed + " MB/s"
         }
+        Write-Host $line -NoNewline -ForegroundColor Cyan
+        Write-Host "`r" -NoNewline
     }
     Write-Host ""
     $fs.Close()

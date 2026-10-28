@@ -14,6 +14,32 @@ ok()   { printf '    \033[1;32m✔ %s\033[0m\n' "$1"; }
 warn() { printf '    \033[1;33m⚠ %s\033[0m\n' "$1"; }
 fail() { printf '    \033[1;31m✘ %s\033[0m\n' "$1"; exit 1; }
 
+
+# ---------------------------------------------------------------------------
+# bar_wait_until <PID> <max_sec> <label> - анимированный прогресс-бар,
+# пока фоновый процесс с указанным PID живёт.
+# ---------------------------------------------------------------------------
+bar_wait_until() {
+    local pid="$1" max="$2" label="${3:-Работа}"
+    local n=0 width=30
+    while kill -0 "$pid" 2>/dev/null && [ "$n" -lt "$max" ]; do
+        local pct=$(( n * 100 / max ))
+        [ "$pct" -gt 97 ] && pct=97
+        local filled=$(( pct * width / 100 ))
+        local bar=""
+        for ((i=0;i<width;i++)); do
+            if [ "$i" -lt "$filled" ]; then bar="${bar}#"; else bar="${bar}-"; fi
+        done
+        printf "\r    [%s] %3d%%  %s (%ds)" "$bar" "$pct" "$label" "$n"
+        sleep 1
+        n=$(( n + 1 ))
+    done
+    # финальная отрисовка 100%
+    local full_bar=""
+    for ((i=0;i<width;i++)); do full_bar="${full_bar}#"; done
+    printf "\r    [%s] 100%%  %s\n" "$full_bar" "$label"
+}
+
 # ----------------------------------------------------------------------------
 # Шаг 1. Проверяем, что Docker установлен и запущен
 # ----------------------------------------------------------------------------
@@ -42,8 +68,20 @@ fi
 # Шаг 3. Останавливаем старые контейнеры (если они были), собираем новые
 # ----------------------------------------------------------------------------
 say "Шаг 3/5: сборка и запуск контейнеров (база данных + сайт)"
+echo "    Первый запуск скачивает образы — это может занять несколько минут."
 docker compose down --remove-orphans >/dev/null 2>&1 || true
-docker compose up --build -d
+rm -f .dc-code.tmp
+( docker compose up --build -d > .dc-build.log 2>&1; echo $? > .dc-code.tmp ) &
+DC_PID=$!
+bar_wait_until "$DC_PID" 600 "Сборка контейнеров"
+wait "$DC_PID" 2>/dev/null || true
+DC_CODE=$(cat .dc-code.tmp 2>/dev/null || echo 1)
+rm -f .dc-code.tmp
+if [ "$DC_CODE" != "0" ]; then
+    echo "    Последние строки вывода сборки:"
+    tail -n 20 .dc-build.log || true
+    fail "Контейнеры не запустились. См. текст выше."
+fi
 ok "Контейнеры запущены"
 
 # ----------------------------------------------------------------------------

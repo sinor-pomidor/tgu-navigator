@@ -56,12 +56,17 @@ rem ---------------------------------------------------------------------------
 echo.
 echo [Step 3/5] Building and starting containers (database + site)...
 echo          First run downloads images and builds the app - it can take
-echo          several minutes. Docker prints its own progress below,
-echo          so it is normal that this step is not instant.
+echo          several minutes. Docker prints its own progress below.
 docker compose down --remove-orphans >nul 2>nul
-docker compose up --build -d
-if errorlevel 1 (
-    echo   [ERROR] Containers did not start. See the text above.
+start "" /b cmd /c "docker compose up --build -d & echo %%ERRORLEVEL%%> .dc-code.tmp"
+call :dcbar
+set "DC_FAIL=1"
+if exist .dc-code.tmp (
+    findstr /r "^0$" .dc-code.tmp >nul 2>nul && set "DC_FAIL="
+)
+del .dc-code.tmp >nul 2>nul
+if defined DC_FAIL (
+    echo   [ERROR] Containers did not start. Run "docker compose logs" to see why.
     pause
     exit /b 1
 )
@@ -95,6 +100,7 @@ exit /b 1
 
 :healthok
 echo   [OK] API responds: /health - ok
+echo   Loading catalog into the database...
 docker compose exec -T app python -m app.seed
 if errorlevel 1 (
     echo   [ERROR] Could not load the catalog.
@@ -129,4 +135,26 @@ echo   Telegram bot (once the token is in .env):
 echo     docker compose exec app python -m app.bot.bot
 echo.
 pause
-endlocal
+exit /b 0
+
+rem ---------------------------------------------------------------------------
+rem :dcbar - animated progress bar while "docker compose up --build" runs
+rem in background. Shows elapsed time; finishes when worker writes marker.
+rem ---------------------------------------------------------------------------
+:dcbar
+setlocal EnableExtensions EnableDelayedExpansion
+set /a DC_MAX=600
+set /a DC_N=0
+:dcloop
+set /a DC_PCT=DC_N*100/DC_MAX
+if !DC_PCT! gtr 97 set DC_PCT=97
+if exist .dc-code.tmp set DC_PCT=100
+set /a DC_FILLED=DC_PCT*30/100
+set "DC_BAR="
+for /l %%i in (1,1,30) do if %%i leq !DC_FILLED! (set "DC_BAR=!DC_BAR!#") else (set "DC_BAR=!DC_BAR!-")
+echo   [!DC_BAR!] !DC_PCT!%%  (!DC_N! sec elapsed, first build is the longest)
+if exist .dc-code.tmp endlocal & exit /b 0
+set /a DC_N+=1
+if !DC_N! geq !DC_MAX! endlocal & exit /b 0
+timeout /t 1 /nobreak >nul
+goto dcloop
