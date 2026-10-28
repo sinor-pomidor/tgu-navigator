@@ -55,7 +55,9 @@ rem Step 3. Build and start containers
 rem ---------------------------------------------------------------------------
 echo.
 echo [Step 3/5] Building and starting containers (database + site)...
-echo          First run may take several minutes...
+echo          First run downloads images and builds the app - it can take
+echo          several minutes. Docker prints its own progress below,
+echo          so it is normal that this step is not instant.
 docker compose down --remove-orphans >nul 2>nul
 docker compose up --build -d
 if errorlevel 1 (
@@ -72,6 +74,12 @@ echo.
 echo [Step 4/5] Waiting for the site to come up...
 set /a TRY=0
 :waitloop
+set /a PCT=(TRY+1)*100/60
+if %PCT% gtr 100 set PCT=100
+set /a FILLED=PCT*30/100
+set "BAR="
+for /l %%i in (1,1,30) do if %%i leq %FILLED% (set "BAR=!BAR!#") else (set "BAR=!BAR! ")
+echo   [!BAR!] !PCT!%%  (~%TRY% sec of ~120)
 powershell -NoProfile -Command "try { (Invoke-WebRequest -Uri http://localhost:8000/health -UseBasicParsing -TimeoutSec 2).StatusCode } catch { exit 1 }" >nul 2>nul
 if not errorlevel 1 goto healthok
 set /a TRY+=1

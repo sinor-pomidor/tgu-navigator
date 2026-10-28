@@ -64,8 +64,13 @@ if [ ! -d ".venv" ]; then
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
-python -m pip install --upgrade pip --quiet
-pip install -r requirements.txt --quiet
+if [ ! -f ".venv/.tgu-deps-ok" ]; then
+    echo "  Устанавливаем пакеты, это займёт пару минут. Ниже — прогресс:"
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt && touch .venv/.tgu-deps-ok
+else
+    echo "  Пакеты уже установлены - пропускаем."
+fi
 echo "  [OK] Окружение готово."
 
 # ---------------------------------------------------------------------------
