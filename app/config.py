@@ -4,9 +4,31 @@
 через ``pydantic-settings``. Секреты в коде отсутствуют.
 """
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Файл локальной базы для режима «без Docker» (создаётся автоматически).
+LOCAL_SQLITE_PATH = Path(__file__).resolve().parent.parent / "data" / "navigator.db"
+
+
+def default_database_url() -> str:
+    """Строка подключения по умолчанию.
+
+    Если в окружении задан ``DATABASE_URL`` (облачный Postgres/Neon) —
+    используется он; иначе — локальный SQLite-файл, что позволяет запускать
+    приложение одной командой Python без Docker и без сервера PostgreSQL.
+
+    Returns:
+        Строка подключения SQLAlchemy.
+    """
+    env_url = os.getenv("DATABASE_URL")
+    if env_url:
+        return env_url
+    return f"sqlite:///{LOCAL_SQLITE_PATH}"
 
 
 class Settings(BaseSettings):
@@ -18,10 +40,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # База данных
-    database_url: str = (
-        "postgresql+psycopg2://navigator:navigator@localhost:5432/navigator"
-    )
+    # База данных: Postgres (docker/облако) или SQLite (режим без Docker).
+    database_url: str = ""
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _fill_default_db(cls, value: str | None) -> str:
+        """Подставляет DATABASE_URL из окружения или путь к SQLite."""
+        if not value:
+            return default_database_url()
+        return value
 
     # LLM-провайдер: mock | openai_compatible
     llm_provider: str = "mock"

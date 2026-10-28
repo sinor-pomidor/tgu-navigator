@@ -161,20 +161,88 @@ _SQL_SEARCH = sql_text(
     """
 )
 
-_SQL_FALLBACK = sql_text(
+# Деградированный поиск (без pg_trgm): SQL-кандидаты по подстроке +
+# Python-ранжирование. Ищем каждое значимое слово запроса в title,
+# description и тегах; совпадения с тегами — сильный сигнал (как в
+# основном pg_trgm-пути), затем название, затем описание. Быстрое
+# нечёткое сравнение (rapidfuzz) ловит опечатки и словоформы
+# («проект» ~ «проекты», «иии» ~ «ии»). Один и тот же код работает на
+# PostgreSQL (теги — массив, приводим к тексту) и SQLite (теги — JSON).
+def _fallback_search(
+    needle: str, session: Session, limit: int
+) -> list[SearchResult]:
+    """Поиск без pg_trgm: подстрока + нечёткое ранжирование в Python.
+
+    Args:
+        needle: нормализованный запрос (нижний регистр).
+        session: активная сессия БД.
+        limit: максимальное число результатов.
+
+    Returns:
+        Отсортированный список ``SearchResult``; пустой список, если
+        ничего не найдено.
     """
-    SELECT o.id
-      FROM opportunities AS o
-     WHERE o.status IN ('open', 'closing_soon')
-       AND (
-             lower(o.title) LIKE '%' || :needle || '%'
-          OR lower(COALESCE(o.description, '')) LIKE '%' || :needle || '%'
-          OR lower(array_to_string(o.tags, ' ')) LIKE '%' || :needle || '%'
-           )
-     ORDER BY o.id ASC
-     LIMIT :limit
-    """
-)
+    from rapidfuzz import fuzz  # локальный импорт: зависимость лёгкая
+
+    words = tokenize(needle) or [needle]
+    is_sqlite = (
+        session.bind is not None and session.bind.dialect.name == "sqlite"
+    )
+    tags_expr = (
+        "COALESCE(o.tags, '')" if is_sqlite
+        else "array_to_string(COALESCE(o.tags, ARRAY[]::text[]), ' ')"
+    )
+    conds = " OR ".join(
+        f"(lower(o.title) LIKE '%' || :w{i} || '%'"
+        f" OR lower(COALESCE(o.description, '')) LIKE '%' || :w{i} || '%'"
+        f" OR lower({tags_expr}) LIKE '%' || :w{i} || '%')"
+        for i in range(len(words))
+    )
+    stmt = sql_text(
+        f"""
+        SELECT o.id, o.title, COALESCE(o.description, '') AS descr,
+               {tags_expr} AS tags_text
+          FROM opportunities AS o
+         WHERE o.status IN ('open', 'closing_soon')
+           AND ({conds})
+         LIMIT 60
+        """
+    )
+    params = {f"w{i}": w for i, w in enumerate(words)}
+    rows = session.execute(stmt, params).fetchall()
+
+    scored: dict[int, float] = {}
+    for r in rows:
+        title = (r.title or "").lower()
+        descr = (r.descr or "").lower()
+        tags = [t.strip() for t in re.split(r"[,\[\]\"']+", (r.tags_text or "").lower()) if t.strip()]
+        score = 0.0
+        for w in words:
+            if any(w == t or fuzz.ratio(w, t) >= 80 for t in tags):
+                score += 2.0
+            elif w in title or any(fuzz.ratio(w, t) >= 80 for t in tags):
+                score += 1.5
+            elif w in title or fuzz.partial_ratio(w, title) >= 85:
+                score += 1.0
+            elif w in descr:
+                score += 0.5
+        if needle in title:
+            score += 0.5
+        if score >= MIN_SCORE:
+            scored[r.id] = score
+    if not scored:
+        return []
+    top_ids = sorted(scored, key=lambda i: (-scored[i], i))[:limit]
+    objs = {
+        o.id: o for o in session.query(Opportunity).filter(Opportunity.id.in_(top_ids))
+    }
+    results = [
+        SearchResult(opportunity=objs[i], score=scored[i])
+        for i in top_ids
+        if i in objs
+    ]
+    logger.info("Деградированный поиск %r: принято=%s", needle, len(results))
+    return results
 
 
 def search(
@@ -206,7 +274,7 @@ def search(
     session = db if db is not None else Session(bind=eng)
 
     try:
-        if not _pg_trgm_available(eng):
+        if eng.dialect.name != "postgresql" or not _pg_trgm_available(eng):
             logger.warning("pg_trgm недоступен — деградация к ILIKE-поиску")
             return _fallback_search(cleaned, session, limit)
 
@@ -240,19 +308,3 @@ def search(
     finally:
         if own_session:
             session.close()
-
-
-def _fallback_search(
-    needle: str, session: Session, limit: int
-) -> list[SearchResult]:
-    """Поиск подстрокой без pg_trgm (деградация, скор = 0)."""
-    rows = session.execute(
-        _SQL_FALLBACK, {"needle": needle, "limit": limit}
-    ).fetchall()
-    ids = [r.id for r in rows]
-    if not ids:
-        return []
-    objs = {
-        o.id: o for o in session.query(Opportunity).filter(Opportunity.id.in_(ids))
-    }
-    return [SearchResult(opportunity=objs[r.id], score=0.0) for r in rows if r.id in objs]

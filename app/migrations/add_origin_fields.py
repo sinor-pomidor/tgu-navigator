@@ -23,7 +23,10 @@ from app.db import get_engine, session_scope
 
 logger = logging.getLogger(__name__)
 
-#: Идемпотентные DDL/DML-операции миграции.
+#: Идемпотентные DDL/DML-операции миграции для PostgreSQL.
+#: SQLite не поддерживает ``ADD COLUMN IF NOT EXISTS``, ``TIMESTAMPTZ`` и
+#: частичные индексы — для него используется список ниже (проверка колонки
+#: через PRAGMA table_info перед каждым ALTER).
 STATEMENTS: list[str] = [
     """
     ALTER TABLE opportunities
@@ -51,13 +54,52 @@ STATEMENTS: list[str] = [
     """,
 ]
 
+#: Колонки, которые миграция добавляет (для проверки в SQLite).
+_SQLITE_COLUMNS: dict[str, str] = {
+    "origin": "TEXT NOT NULL DEFAULT 'manual'",
+    "last_seen_at": "DATETIME",
+    "external_id": "TEXT",
+    "source": "TEXT NOT NULL DEFAULT 'manual'",
+}
+
+#: Уникальный индекс для дедупликации parsed-записей в SQLite.
+#: Частичный индекс (WHERE) не поддерживается — уникальность по паре
+#: (source, external_id) достаточна: у ручных записей external_id NULL,
+#: а NULL в SQLite не участвует в проверке уникальности.
+_SQLITE_INDEX = """
+CREATE UNIQUE INDEX IF NOT EXISTS uq_opportunities_source_external
+    ON opportunities (source, external_id)
+"""
+
+
+def _migrate_sqlite(conn) -> None:  # noqa: ANN001
+    """Применяет миграцию к SQLite с проверкой существующих колонок."""
+    existing = {
+        row[1] for row in conn.execute(text("PRAGMA table_info(opportunities)"))
+    }
+    for column, ddl_type in _SQLITE_COLUMNS.items():
+        if column not in existing:
+            conn.execute(
+                text(f"ALTER TABLE opportunities ADD COLUMN {column} {ddl_type}")
+            )
+    conn.execute(text("UPDATE opportunities SET origin = 'manual' WHERE origin IS NULL"))
+    conn.execute(text(_SQLITE_INDEX))
+
 
 def migrate() -> None:
-    """Применяет все DDL/DML-операции миграции к текущей базе."""
+    """Применяет все DDL/DML-операции миграции к текущей базе.
+
+    Диалект определяется по строке подключения: для SQLite используются
+    совместимые конструкции (PRAGMA + обычный ALTER), для PostgreSQL —
+    исходный набор statements. Метод идемпотентен для обеих СУБД.
+    """
     engine = get_engine()
     with engine.begin() as conn:
-        for stmt in STATEMENTS:
-            conn.execute(text(stmt))
+        if engine.dialect.name == "sqlite":
+            _migrate_sqlite(conn)
+        else:
+            for stmt in STATEMENTS:
+                conn.execute(text(stmt))
     logger.info("Миграция add_origin_fields применена (идемпотентно)")
 
 
