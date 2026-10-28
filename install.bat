@@ -1,75 +1,75 @@
 @echo off
-chcp 65001 >nul
 rem ============================================================================
-rem  ТГУ: Навигатор возможностей — установка и запуск (Windows)
-rem  Просто дважды кликни по этому файлу (или запусти в cmd: install.bat)
-rem  Скрипт проверит Docker, создаст конфиг, соберёт контейнеры,
-rem  загрузит каталог возможностей и покажет, куда заходить.
+rem  TGU Navigator - Docker install (Windows)
+rem  Use this ONLY if you have Docker Desktop installed.
+rem  If not - just double-click run.bat instead (no Docker needed).
+rem  Messages are in English on purpose: non-ASCII text in .bat files
+rem  breaks on some Windows codepages.
 rem ============================================================================
-setlocal EnableDelayedExpansion
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo.
 echo ============================================================
-echo   ТГУ: Навигатор возможностей — установка
+echo   TGU Navigator - Docker setup
 echo ============================================================
 
 rem ---------------------------------------------------------------------------
-rem Шаг 1. Проверяем Docker
+rem Step 1. Check Docker
 rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 1/5] Проверка Docker...
+echo [Step 1/5] Checking Docker...
 where docker >nul 2>nul
 if errorlevel 1 (
-    echo   [ОШИБКА] Docker не найден.
-    echo   Установи Docker Desktop: https://www.docker.com/products/docker-desktop/
-    echo   Перезагрузи компьютер и запусти этот файл снова.
+    echo   [ERROR] Docker was not found.
+    echo   You do NOT need it: close this window and double-click run.bat instead.
+    echo   If you really want the Docker version: https://www.docker.com/products/docker-desktop/
     pause
     exit /b 1
 )
 docker info >nul 2>nul
 if errorlevel 1 (
-    echo   [ОШИБКА] Docker установлен, но НЕ запущен.
-    echo   Открой приложение Docker Desktop, дождись зелёного статуса
-    echo   ^(Engine running^) и запусти этот файл снова.
+    echo   [ERROR] Docker is installed but NOT running.
+    echo   Open Docker Desktop, wait until its status is green ^(Engine running^),
+    echo   then run this file again.
     pause
     exit /b 1
 )
-echo   [OK] Docker работает.
+echo   [OK] Docker works.
 
 rem ---------------------------------------------------------------------------
-rem Шаг 2. Создаём .env из образца, если его нет
+rem Step 2. Create .env from the sample if missing
 rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 2/5] Конфигурация (.env)...
+echo [Step 2/5] Configuration (.env)...
 if exist .env (
-    echo   [OK] .env уже существует — оставляю как есть.
+    echo   [OK] .env already exists - keeping it as is.
 ) else (
     copy .env.example .env >nul
-    echo   [OK] Создан .env из образца. Всё работает БЕЗ ключей (LLM_PROVIDER=mock).
-    echo        Если позже захочешь Telegram-бота — допиши токен в файл .env.
+    echo   [OK] Created .env from the sample. Everything works WITHOUT keys.
+    echo        For the Telegram bot later - put the token into .env.
 )
 
 rem ---------------------------------------------------------------------------
-rem Шаг 3. Останавливаем старые контейнеры, собираем и запускаем новые
+rem Step 3. Build and start containers
 rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 3/5] Сборка и запуск контейнеров (база данных + сайт)...
-echo          Это может занять несколько минут при первом запуске...
+echo [Step 3/5] Building and starting containers (database + site)...
+echo          First run may take several minutes...
 docker compose down --remove-orphans >nul 2>nul
 docker compose up --build -d
 if errorlevel 1 (
-    echo   [ОШИБКА] Не удалось поднять контейнеры. См. текст выше.
+    echo   [ERROR] Containers did not start. See the text above.
     pause
     exit /b 1
 )
-echo   [OK] Контейнеры запущены.
+echo   [OK] Containers are running.
 
 rem ---------------------------------------------------------------------------
-rem Шаг 4. Ждём готовности API и загружаем каталог
+rem Step 4. Wait for the API and load the catalog
 rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 4/5] Ожидание запуска сайта...
+echo [Step 4/5] Waiting for the site to come up...
 set /a TRY=0
 :waitloop
 powershell -NoProfile -Command "try { (Invoke-WebRequest -Uri http://localhost:8000/health -UseBasicParsing -TimeoutSec 2).StatusCode } catch { exit 1 }" >nul 2>nul
@@ -80,44 +80,44 @@ timeout /t 2 /nobreak >nul
 goto waitloop
 
 :healthfail
-echo   [ОШИБКА] Сайт не поднялся за 2 минуты. Последние строки лога:
+echo   [ERROR] The site did not come up within 2 minutes. Last log lines:
 docker compose logs app --tail 20
 pause
 exit /b 1
 
 :healthok
-echo   [OK] API отвечает: /health - ok
+echo   [OK] API responds: /health - ok
 docker compose exec -T app python -m app.seed
 if errorlevel 1 (
-    echo   [ОШИБКА] Не удалось загрузить каталог.
+    echo   [ERROR] Could not load the catalog.
     pause
     exit /b 1
 )
-echo   [OK] Каталог возможностей загружен в базу.
+echo   [OK] Opportunities catalog loaded into the database.
 
 rem ---------------------------------------------------------------------------
-rem Шаг 5. Итог
+rem Step 5. Done
 rem ---------------------------------------------------------------------------
 echo.
-echo [Шаг 5/5] Готово!
+echo [Step 5/5] Done!
 echo.
 echo   ============================================================
-echo    ПРОЕКТ УСТАНОВЛЕН И РАБОТАЕТ
+echo     PROJECT IS INSTALLED AND RUNNING
 echo   ============================================================
 echo.
-echo    Веб-интерфейс:     http://localhost:8000/
-echo    Документация API:  http://localhost:8000/docs
+echo     Web interface:  http://localhost:8000/
+echo     API docs:       http://localhost:8000/docs
 echo.
-echo   Сейчас откроется страница в браузере...
+echo   Opening the page in your browser now...
 start "" http://localhost:8000/
 echo.
-echo   Полезные команды (запускаются в этой папке, в окне cmd):
-echo     остановить проект:  docker compose stop
-echo     запустить снова:    docker compose start
-echo     посмотреть логи:    docker compose logs -f app
-echo     обновить каталог:   docker compose exec app python -m app.seed
+echo   Useful commands (run them in this folder, in a cmd window):
+echo     stop project:     docker compose stop
+echo     start again:      docker compose start
+echo     view logs:        docker compose logs -f app
+echo     reload catalog:   docker compose exec app python -m app.seed
 echo.
-echo   Запуск Telegram-бота (когда добавишь токен в .env):
+echo   Telegram bot (once the token is in .env):
 echo     docker compose exec app python -m app.bot.bot
 echo.
 pause
