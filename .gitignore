@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+
+# Виртуальные окружения
+.venv/
+venv/
+.pyportable/
+.run-server.bat
+server.pid
+
+# Секреты и конфигурация окружения
+.env
+.env.local
+
+# Локальные базы данных (SQLite для запуска без Docker)
+data/
+*.sqlite3
+
+# Кэши инструментов
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Логи и временные файлы
+*.log
+*.tmp
+
+# Архивы релизов (собираются на этапе релиза, не хранятся в git)
+*.zip
+
+# Режим запуска без Docker: локальная база SQLite и файлы сервиса
+/data/
+*.db
+server.log
+server.pid

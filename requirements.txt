@@ -1,0 +1,30 @@
+# Зависимости проекта «ТГУ: Навигатор возможностей» (Python 3.11+)
+
+# API
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+
+# Конфигурация и схемы данных
+pydantic==2.11.7
+pydantic-settings==2.10.1
+
+# База данных
+SQLAlchemy==2.0.41
+psycopg2-binary==2.9.10
+
+# Telegram-бот
+aiogram==3.21.0
+
+# HTTP-клиент (для OpenAI-совместимого LLM API)
+httpx==0.28.1
+
+# Тесты
+pytest==8.4.1
+pytest-cov==7.1.0
+
+# Сбор данных с публичных страниц (ingestion)
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# Нечёткое сравнение слов (деградированный поиск без pg_trgm)
+rapidfuzz==3.13.0

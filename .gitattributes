@@ -1,0 +1,7 @@
+# Windows batch files: always CRLF in working dir and in archive, never mangle
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# PowerShell scripts: Windows likes CRLF + UTF-8 BOM-less is fine for ASCII
+*.ps1 text eol=crlf
+# Shell scripts: keep LF
+*.sh  text eol=lf
