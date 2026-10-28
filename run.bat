@@ -22,118 +22,61 @@ echo   TGU Navigator - simple launch (no Docker, no install)
 echo ============================================================
 
 rem ---------------------------------------------------------------------------
-rem Step 1. Find Python: system python/py first, then local portable copy
+rem Step 1. Find Python: system python/py, portable copy, then winget.
+rem IMPORTANT: Microsoft Store ships a "python.exe" alias stub that prints
+rem nothing and exits with an error - it must NOT be treated as real Python.
 rem ---------------------------------------------------------------------------
 echo.
 echo [Step 1/4] Checking Python...
 set "PY="
-where python >nul 2>nul && set "PY=python"
-if not defined PY (
-    where py >nul 2>nul && set "PY=py -3"
+
+rem Portable copy from a previous run has top priority (fully ours).
+if exist "%PORTABLE_PY%" (
+    "%PORTABLE_PY%" -c "import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)" >nul 2>nul
+    if not errorlevel 1 set "PY=%PORTABLE_PY%"
 )
-if defined PY (
-    %PY% -c "import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)" >nul 2>nul
-    if errorlevel 1 set "PY="
+
+rem System python.exe / py.exe - verify it is REAL Python, not the Store stub.
+if not defined PY (
+    where python >nul 2>nul && (
+        python -c "import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)" >nul 2>nul
+        if not errorlevel 1 set "PY=python"
+    )
 )
 if not defined PY (
-    if exist "%PORTABLE_PY%" set "PY=%PORTABLE_PY%"
+    where py >nul 2>nul && (
+        py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)" >nul 2>nul
+        if not errorlevel 1 set "PY=py -3"
+    )
 )
 if defined PY goto :py_ok
 
-echo   Python not found on this PC. Downloading portable Python...
-echo   (one-time download, about 25 MB, takes 1-3 minutes)
-echo   Live progress bar below shows real percent and speed:
-set "DL_OK="
-rem PRIMARY path: official embedded Python zip from python.org via curl.exe
-rem (shipped with Windows 10 1803+ / Windows 11). Small (~11 MB), fast,
-rem no PowerShell/.NET dependencies at all. This is the method that has
-rem always worked even on locked-down machines.
-echo   Method 1 of 3: curl + python.org embedded zip...
-mkdir "%PORTABLE_DIR%" >nul 2>nul
-where curl >nul 2>nul && (
-    curl --progress-bar -L --retry 2 --max-time 600 -o "%PORTABLE_DIR%\python-embed.zip" "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
-    if not errorlevel 1 set "DL_OK=curl-zip"
+rem Python missing entirely -> try winget first (no PowerShell/.NET needed),
+rem then fall back to downloading the official installer.
+echo   Python not found on this PC. Trying automatic install via winget...
+del ".download.log" >nul 2>nul
+where winget >nul 2>nul && (
+    echo   Method 1 of 2: winget install Python.Python.3.11 ...
+    winget install --id Python.Python.3.11 -e --accept-source-agreements --accept-package-agreements --silent >".download.log" 2>&1
+    if not errorlevel 1 set "DL_OK=winget"
 )
-if not defined DL_OK (
-    rem Fallback 1: Invoke-WebRequest (works on every PS version, no .NET types)
-    echo   Method 2 of 3: PowerShell Invoke-WebRequest + python.org...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip' -OutFile '%PORTABLE_DIR%\python-embed.zip' -UseBasicParsing" >nul 2>nul
-    if not errorlevel 1 set "DL_OK=iwr-zip"
+if defined DL_OK (
+    rem winget updated registry PATH; refresh it inside this window.
+    for /f "tokens=2,*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul ^| find "Path"') do set "PATH=%%B;%PATH%"
+    for %%V in (3.11 3.12 3.10) do if exist "%LOCALAPPDATA%\Programs\Python\%%V\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\%%V\python.exe"
+    if not defined PY where python >nul 2>nul && set "PY=python"
+    if defined PY (
+        "%PY%" -c "import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)" >nul 2>nul
+        if not errorlevel 1 echo   [OK] Python installed via winget.
+        if errorlevel 1 set "PY="
+    )
+    if defined PY goto :py_ok
 )
-if not defined DL_OK (
-    rem Fallback 2: the old PS1 script (github mirror, HttpWebRequest progress bar)
-    echo   Method 3 of 3: mirrored download with custom progress bar...
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0download-python.ps1"
-    if not errorlevel 1 set "DL_OK=ps1"
-)
-if not defined DL_OK goto :download_failed
 
-rem Every zip-based method lands here. tar.exe (built into Windows 10+)
-rem unpacks the official embedded Python zip. The ps1 fallback downloads
-rem a .tar.gz from a GitHub mirror instead, so pick the branch by DL_OK.
-if "%DL_OK%"=="ps1" goto :extract_targz
-goto :extract_zip
-
-:extract_targz
-rem python-build-standalone archive keeps everything under "python/".
-call :bar_wait 20 "Extracting files"
-mkdir "%PORTABLE_DIR%" >nul 2>nul
-tar -xf "%TEMP%\tgu-py.tar.gz" -C "%PORTABLE_DIR%" --strip-components=1
-if not exist "%PORTABLE_PY%" goto :download_failed
-del "%TEMP%\tgu-py.tar.gz" >nul 2>nul
-set "PY=%PORTABLE_PY%"
-echo   [OK] Portable Python installed.
-goto :py_ok
-
-rem Embedded Python: plain zip, unpack with tar (built into Windows 10+;
-rem bsdtar reads zips natively), then enable pip by uncommenting
-rem "import site" in pythonNNN._pth. If tar fails - try PowerShell Expand.
-:extract_zip
-call :bar_wait 10 "Extracting files"
-tar -xf "%PORTABLE_DIR%\python-embed.zip" -C "%PORTABLE_DIR%" >nul 2>nul
-if not exist "%PORTABLE_PY%" (
-    echo   tar could not unpack, trying PowerShell Expand-Archive...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath '%PORTABLE_DIR%\python-embed.zip' -DestinationPath '%PORTABLE_DIR%' -Force } catch { exit 1 }" >nul 2>nul
-)
-if not exist "%PORTABLE_PY%" goto :download_failed
-del "%PORTABLE_DIR%\python-embed.zip" >nul 2>nul
-for %%F in ("%PORTABLE_DIR%\python*._pth") do (
-    powershell -NoProfile -Command "(Get-Content '%%~fF') -replace '^#import site','import site' | Set-Content '%%~fF'"
-)
-"%PORTABLE_PY%" -c "import sys; print('  Python', sys.version.split()[0], 'embedded')" >nul 2>nul || goto :download_failed
-echo   Bootstrapping pip for embedded Python (get-pip.py)...
-set "GETPIP_OK="
-where curl >nul 2>nul && (
-    curl -sS -L --retry 2 --max-time 120 -o "%TEMP%\get-pip.py" "https://bootstrap.pypa.io/get-pip.py"
-    if not errorlevel 1 set "GETPIP_OK=1"
-)
-if not defined GETPIP_OK (
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py' -UseBasicParsing -TimeoutSec 60 } catch { exit 1 }" >nul 2>nul
-    if not errorlevel 1 set "GETPIP_OK=1"
-)
-if not defined GETPIP_OK goto :download_failed
-"%PORTABLE_PY%" "%TEMP%\get-pip.py" --disable-pip-version-check > .pip-bootstrap.log 2>&1
-if errorlevel 1 (
-    echo   [WARN] get-pip.py failed, last log lines:
-    powershell -NoProfile -Command "Get-Content .pip-bootstrap.log -Tail 5"
-    del .pip-bootstrap.log >nul 2>nul
-    goto :download_failed
-)
-del .pip-bootstrap.log >nul 2>nul
-set "PY=%PORTABLE_PY%"
-echo   [OK] Portable Python installed.
-goto :py_ok
-
-:download_failed
-echo   [ERROR] Could not download Python automatically.
-echo   Possible reasons: no internet, proxy/firewall blocks downloads,
-echo   or the download server is temporarily unavailable.
-echo   Please install Python once manually:
-echo     1. Open https://www.python.org/downloads/
-echo     2. Run the installer and TICK the box "Add python.exe to PATH"
-echo     3. Finish installation and double-click this file again
-pause
-exit /b 1
+echo   winget unavailable or failed. Downloading official installer...
+call :download_python
+if defined PY goto :py_ok
+goto :download_failed
 
 :py_ok
 "%PY%" --version 2>nul || %PY% --version
@@ -381,3 +324,76 @@ exit /b 0
 %PY% -m pip install --user -r requirements.txt --disable-pip-version-check > .pip-step.log 2>&1
 if errorlevel 1 (type nul > .pip-fail) else (type nul > .pip-ok)
 exit /b 0
+
+rem ---------------------------------------------------------------------------
+rem :download_python - fetch and run the official Python installer.
+rem Three independent channels, each tried in order; real errors are written
+rem to .download.log so the user sees WHY something failed:
+rem   1. curl.exe  (shipped with Windows 10 1803+, no PowerShell/.NET needed)
+rem   2. certutil  (built into every Windows since XP, dead simple)
+rem   3. Invoke-WebRequest (last resort; catches its own errors)
+rem On success sets PY and returns 0; otherwise returns 1.
+rem ---------------------------------------------------------------------------
+:download_python
+set "DL_OK="
+mkdir "%PORTABLE_DIR%" >nul 2>nul
+set "SETUP_EXE=%PORTABLE_DIR%\python-setup.exe"
+set "PY_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+
+echo   Method 1 of 3: curl + python.org...
+where curl.exe >nul 2>nul
+if not errorlevel 1 (
+    curl.exe --fail -sSL --retry 2 --max-time 900 -o "%SETUP_EXE%" "%PY_URL%" 2>>".download.log"
+    if not errorlevel 1 set "DL_OK=curl"
+)
+
+if not defined DL_OK (
+    echo   Method 2 of 3: certutil + python.org...
+    certutil -urlcache -split -f "%PY_URL%" "%SETUP_EXE%" >>".download.log" 2>nul
+    if not errorlevel 1 set "DL_OK=certutil"
+)
+
+if not defined DL_OK (
+    echo   Method 3 of 3: PowerShell Invoke-WebRequest...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%PY_URL%' -OutFile '%SETUP_EXE%' -UseBasicParsing } catch { Add-Content -Path '.download.log' -Value $_.Exception.Message; exit 1 }" >nul 2>nul
+    if not errorlevel 1 set "DL_OK=iwr"
+)
+
+if not defined DL_OK exit /b 1
+if not exist "%SETUP_EXE%" exit /b 1
+
+echo   Download finished (%DL_OK%). Installing Python silently (no admin)...
+call :bar_wait 90 "Installing Python"
+"%SETUP_EXE%" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_test=0 >nul 2>nul
+del "%SETUP_EXE%" >nul 2>nul
+
+rem Locate the freshly installed interpreter (per-user location).
+for %%V in (3.11 3.12 3.10) do (
+    if exist "%LOCALAPPDATA%\Programs\Python\%%V\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\%%V\python.exe"
+)
+if not defined PY (
+    rem Installer updated registry PATH; refresh it inside this window.
+    for /f "tokens=2,*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul ^| find "Path"') do set "PATH=%%B;%PATH%"
+    where python >nul 2>nul && set "PY=python"
+)
+if not defined PY exit /b 1
+"%PY%" -c "import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)" >nul 2>nul
+if errorlevel 1 exit /b 1
+echo   [OK] Python installed automatically.
+exit /b 0
+
+:download_failed
+echo   [ERROR] Could not install Python automatically.
+echo   Possible reasons: no internet, proxy/firewall blocks downloads,
+echo   or the download server is temporarily unavailable.
+if exist ".download.log" (
+    echo   --- Last error lines (from .download.log): ---
+    powershell -NoProfile -Command "Get-Content '.download.log' -Tail 3" 2>nul
+    echo   -----------------------------------------------
+)
+echo   Please install Python once manually - it takes 2 minutes:
+echo     1. Open https://www.python.org/downloads/
+echo     2. Run the installer and TICK the box "Add python.exe to PATH"
+echo     3. Finish installation and double-click this file again
+pause
+exit /b 1
