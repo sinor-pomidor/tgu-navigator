@@ -25,6 +25,7 @@ from app.models import (
     OpportunityStatus,
     OpportunityType,
 )
+from app.progress import progress_bar
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,7 @@ def seed_database(path: Path = DEFAULT_SEED_PATH) -> int:
         Количество загруженных записей.
     """
     records = load_records(path)
+    bar = progress_bar(len(records), "Загрузка каталога")
     with session_scope() as session:
         # Точечная очистка старого сида: delete() выполняется сразу в БД,
         # поэтому объекты, добавляемые в этой же транзакции, не удаляются.
@@ -117,10 +119,12 @@ def seed_database(path: Path = DEFAULT_SEED_PATH) -> int:
             Opportunity.source == "seed",
         ).delete(synchronize_session=False)
 
-        for item in records:
+        for i, item in enumerate(records, start=1):
             session.add(build_opportunity(item))
+            bar.update(i)
 
         total = len(records)
+    bar.finish()
     logger.info("Каталог перезагружен из %s: %d записей", path, total)
     return total
 
