@@ -159,10 +159,13 @@ class Opportunity(Base):
     )
 
     __table_args__ = (
-        # Индексы ускорения поиска. Специфичные для PostgreSQL конструкции
-        # (GIN + pg_trgm, частичные индексы) добавляются только на Postgres:
-        # на SQLite (режим запуска без Docker) они не поддерживаются, а их
-        # роль выполняет деградированный ILIKE-поиск. См. app/db.py.
+        # Индексы, общие для обеих СУБД (PostgreSQL и SQLite). Специфичные
+        # для PostgreSQL конструкции (GIN + pg_trgm, частичный уникальный
+        # индекс) добавляются только на Postgres: см. postgres_only_indexes()
+        # и app/db.py. Полное описание схемы — docs/DB_SCHEMA.md.
+        Index("ix_opportunities_type_status", type, status),
+        Index("ix_opportunities_source_url", source_url),
+        Index("ix_opportunities_deadline", deadline),
     )
 
     @classmethod
