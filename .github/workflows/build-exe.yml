@@ -76,7 +76,33 @@ jobs:
           path: dist/TGU-Navigator.exe
 
       - name: Прикрепить exe к релизу
+        # Загружаем ассет напрямую через GitHub API (curl), а не через
+        # softprops/action-gh-release: тот падал с 403 на GITHUB_TOKEN.
+        # Файл берём из артефакта этого же запуска — он проверен smoke-тестом.
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/TGU-Navigator.exe
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          RID=$(curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            | python -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          echo "release id: ${RID}"
+          # Если ассет с таким именем уже есть — удаляем, затем загружаем заново.
+          EXISTING=$(curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${RID}/assets" \
+            | python -c "import json,sys; [print(a['id']) for a in json.load(sys.stdin) if a['name']=='TGU-Navigator.exe']" || true)
+          for AID in ${EXISTING}; do
+            curl -sf -X DELETE -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${AID}" -o /dev/null || true
+            echo "удалён старый ассет ${AID}"
+          done
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @dist/TGU-Navigator.exe \
+            "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RID}/assets?name=TGU-Navigator.exe" \
+            -o /tmp/asset.json
+          python -c "import json; a=json.load(open('/tmp/asset.json')); print('загружено:', a['name'], a['size'], a['state'])"
