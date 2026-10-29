@@ -192,12 +192,26 @@ def _fallback_search(
         "COALESCE(o.tags, '')" if is_sqlite
         else "array_to_string(COALESCE(o.tags, ARRAY[]::text[]), ' ')"
     )
-    conds = " OR ".join(
-        f"(lower(o.title) LIKE '%' || :w{i} || '%'"
-        f" OR lower(COALESCE(o.description, '')) LIKE '%' || :w{i} || '%'"
-        f" OR lower({tags_expr}) LIKE '%' || :w{i} || '%')"
-        for i in range(len(words))
-    )
+    # ВАЖНО: в SQLite встроенные lower()/LIKE не понимают кириллицу —
+    # регистронезависимость обеспечивает UDF-функция ILIKE(pattern, value),
+    # зарегистрированная в app.db._register_sqlite_ilike. Аргументы:
+    # сначала шаблон, потом проверяемое значение (в отличие от оператора).
+    if is_sqlite:
+        conds = " OR ".join(
+            f"(ILIKE('%' || :w{i} || '%', o.title)"
+            f" OR ILIKE('%' || :w{i} || '%', COALESCE(o.description, ''))"
+            f" OR ILIKE('%' || :w{i} || '%', {tags_expr}))"
+            for i in range(len(words))
+        )
+        order_expr = f"ILIKE('%' || :w0 || '%', {tags_expr})"
+    else:
+        conds = " OR ".join(
+            f"(o.title LIKE '%' || :w{i} || '%'"
+            f" OR COALESCE(o.description, '') LIKE '%' || :w{i} || '%'"
+            f" OR {tags_expr} LIKE '%' || :w{i} || '%')"
+            for i in range(len(words))
+        )
+        order_expr = f"{tags_expr} LIKE '%' || :w0 || '%'"
     stmt = sql_text(
         f"""
         SELECT o.id, o.title, COALESCE(o.description, '') AS descr,
@@ -205,6 +219,8 @@ def _fallback_search(
           FROM opportunities AS o
          WHERE o.status IN ('open', 'closing_soon')
            AND ({conds})
+         ORDER BY CASE WHEN {order_expr} THEN 0 ELSE 1 END,
+                  o.id ASC
          LIMIT 60
         """
     )

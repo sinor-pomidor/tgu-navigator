@@ -96,8 +96,56 @@ def get_engine() -> Engine:
         else:
             kwargs["pool_pre_ping"] = True
         _engine = create_engine(url, **kwargs)  # type: ignore[arg-type]
+        if _engine.dialect.name == "sqlite":
+            _register_sqlite_ilike(_engine)
 
     return _engine
+
+
+def _register_sqlite_ilike(eng: Engine) -> None:
+    """Добавляет в SQLite оператор ``ILIKE`` с регистронезависимостью Юникода.
+
+    Встроенные ``LIKE``/``lower()`` в SQLite знают только латиницу: без
+    этого хукa кириллический поиск по записям вроде «конкурс УМНИК» не
+    работает. Реализация через ``create_function`` + event listener
+    SQLAlchemy (применяется к каждому новому raw-соединению).
+    """
+
+    def _ilike(pattern: str | None, value: str | None) -> object:
+        """Проверяет, что ``value`` соответствует LIKE-шаблону ``pattern``
+        без учёта регистра (в т.ч. для кириллицы)."""
+        if pattern is None or value is None:
+            return None
+        import re
+
+        # Экранирование LIKE: \\%, _, и сам обратный слэш.
+        parts: list[str] = []
+        i = 0
+        while i < len(pattern):
+            ch = pattern[i]
+            if ch == "\\" and i + 1 < len(pattern):
+                parts.append(re.escape(pattern[i + 1]))
+                i += 2
+            elif ch == "%":
+                parts.append(".*")
+                i += 1
+            elif ch == "_":
+                parts.append(".")
+                i += 1
+            else:
+                parts.append(re.escape(ch))
+                i += 1
+        regex = "(?is)^" + "".join(parts) + "$"
+        return re.match(regex, value) is not None
+
+    @event.listens_for(eng, "connect")
+    def _attach(dbapi_conn, _record) -> None:  # noqa: ANN001
+        try:
+            dbapi_conn.create_function("ILIKE", 2, _ilike, deterministic=True)
+        except Exception:  # noqa: BLE001 - старые драйверы без deterministic
+            dbapi_conn.create_function("ILIKE", 2, _ilike)
+
+    logger.debug("SQLite ILIKE-функция зарегистрирована")
 
 
 def get_session_local() -> sessionmaker[Session]:
