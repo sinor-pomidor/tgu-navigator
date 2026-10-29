@@ -25,7 +25,7 @@ BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.paren
 FRONTEND_DIR = BUNDLE_DIR / "frontend"
 #: Версия приложения: берётся из тега релиза, зашитого сборщиком (.exe),
 #: иначе — из значения по умолчанию для обычных запусков из исходников.
-APP_VERSION = os.environ.get("TGU_APP_VERSION", "0.3.4")
+APP_VERSION = os.environ.get("TGU_APP_VERSION", "0.3.9")
 
 logging.basicConfig(
     level=logging.INFO,

@@ -99,10 +99,12 @@ jobs:
               "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/${AID}" -o /dev/null || true
             echo "удалён старый ассет ${AID}"
           done
+          # ВАЖНО: раннер Windows — bash без /tmp, поэтому ответ API пишем
+          # в файл внутри рабочей директории.
           curl -sf -X POST \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @dist/TGU-Navigator.exe \
             "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RID}/assets?name=TGU-Navigator.exe" \
-            -o /tmp/asset.json
-          python -c "import json; a=json.load(open('/tmp/asset.json')); print('загружено:', a['name'], a['size'], a['state'])"
+            -o asset.json
+          python -c "import json; a=json.load(open('asset.json', encoding='utf-8')); print('загружено:', a['name'], a['size'], a['state'])"
