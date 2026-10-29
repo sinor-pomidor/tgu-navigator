@@ -86,9 +86,22 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          RID=$(curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-            | python -c "import json,sys; print(json.load(sys.stdin)['id'])")
+          # Релиз существует только если он был создан через GitHub (кнопку/
+          # API). Обычный git push тега НЕ создаёт релиз — тогда создаём его
+          # сами через API, иначе запрос к /releases/tags/ вернёт 404 и шаг
+          # упадёт с JSONDecodeError.
+          REL_JSON=$(curl -s -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}")
+          if ! echo "${REL_JSON}" | python -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if 'id' in d else 1)"; then
+            echo "release for tag ${TAG} not found -> creating"
+            curl -sf -X POST -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" \
+              -d "{\"tag_name\":\"${TAG}\",\"name\":\"${TAG}\",\"draft\":false,\"prerelease\":false,\"body\":\"Windows EXE is attached automatically by CI.\"}" \
+              -o created.json
+            REL_JSON=$(cat created.json)
+          fi
+          RID=$(echo "${REL_JSON}" | python -c "import json,sys; print(json.load(sys.stdin)['id'])")
           echo "release id: ${RID}"
           # Если ассет с таким именем уже есть — удаляем, затем загружаем заново.
           EXISTING=$(curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
