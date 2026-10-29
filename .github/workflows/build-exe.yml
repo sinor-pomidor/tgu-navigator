@@ -100,11 +100,12 @@ jobs:
             echo "удалён старый ассет ${AID}"
           done
           # ВАЖНО: раннер Windows — bash без /tmp, поэтому ответ API пишем
-          # в файл внутри рабочей директории.
+          # в файл внутри рабочей директории. print() с русским текстом может
+          # упасть на cp1251 — выводим ASCII, данные читаем с encoding='utf-8'.
           curl -sf -X POST \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Content-Type: application/octet-stream" \
             --data-binary @dist/TGU-Navigator.exe \
             "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RID}/assets?name=TGU-Navigator.exe" \
             -o asset.json
-          python -c "import json; a=json.load(open('asset.json', encoding='utf-8')); print('загружено:', a['name'], a['size'], a['state'])"
+          python -c "import json; a=json.load(open('asset.json', encoding='utf-8')); print('uploaded:', a['name'], a['size'], a['state'])"

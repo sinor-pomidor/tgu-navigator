@@ -1,16 +1,22 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ТГУ: Навигатор возможностей</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ТГУ: Навигатор возможностей — MVP</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <!-- HEADER -->
 <div class="header">
-  <div class="header-logo">🧭 ТГУ: Навигатор возможностей</div>
+  <div class="header-left">
+    <div class="logo-mark">✦</div>
+    <div>
+      <div class="header-title">ТГУ: Навигатор возможностей</div>
+      <div class="header-sub">Персональный ИИ-ассистент</div>
+    </div>
+  </div>
   <div class="header-badge">🎓 MVP · Пилот</div>
 </div>
 
@@ -20,7 +26,7 @@
   <!-- SIDEBAR -->
   <aside class="sidebar">
     <div class="profile-card">
-      <div class="avatar">🎓</div>
+      <div class="avatar">АТ</div>
       <div class="profile-name">Гость ТГУ</div>
       <div class="profile-info">Демо-профиль без персональных данных<br>ИИ, Data Science, стартапы</div>
       <div class="interests">
@@ -37,37 +43,81 @@
         <button class="quick-link" data-preset="projects"><span class="icon">🔬</span> Научные проекты</button>
         <button class="quick-link" data-preset="grants"><span class="icon">💰</span> Гранты и стипендии</button>
         <button class="quick-link" data-preset="events"><span class="icon">📅</span> Мероприятия</button>
-        <button class="quick-link" data-preset="labs"><span class="icon">🧪</span> Лаборатории</button>
+        <button class="quick-link" data-preset="labs"><span class="icon">🏛️</span> Лаборатории</button>
       </div>
     </div>
 
     <div class="sidebar-section">
-      <h3>О системе</h3>
-      <p class="about-text">Ответы основаны только на каталоге проверенных возможностей с ссылками на официальные источники ТГУ.</p>
+      <h3>Статистика пилота</h3>
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-num" id="statQueries">0</div>
+          <div class="stat-label">Запросов</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num" id="statCards">0</div>
+          <div class="stat-label">Рекомендаций</div>
+        </div>
+      </div>
     </div>
   </aside>
 
-  <!-- CHAT -->
-  <main class="chat">
-    <div class="messages" id="messages">
-      <div class="message assistant">
-        <div class="bubble">Привет! Я помогу найти проект, лабораторию, грант или мероприятие в ТГУ. Спросите своими словами — например, «хочу заняться ИИ».</div>
+  <!-- MAIN -->
+  <div class="main">
+
+    <!-- FLOW INDICATOR -->
+    <div class="flow-indicator">
+      <div class="flow-step active" id="fs1"><div class="flow-dot">1</div> Запрос</div>
+      <div class="flow-line" id="fl1"></div>
+      <div class="flow-step" id="fs2"><div class="flow-dot">2</div> Поиск</div>
+      <div class="flow-line" id="fl2"></div>
+      <div class="flow-step" id="fs3"><div class="flow-dot">3</div> Рекомендации</div>
+      <div class="flow-line" id="fl3"></div>
+      <div class="flow-step" id="fs4"><div class="flow-dot">4</div> Действие</div>
+    </div>
+
+    <!-- CHAT -->
+    <div class="chat-area" id="chatArea">
+      <div class="welcome" id="welcomeScreen">
+        <div class="welcome-icon">✦</div>
+        <h2>Чем хочешь заниматься?</h2>
+        <p>Я — навигатор возможностей ТГУ. Расскажи о своих интересах, и я подберу подходящие проекты, лаборатории, гранты и мероприятия.</p>
+        <div class="feature-pills">
+          <div class="feature-pill">🔬 Научные проекты</div>
+          <div class="feature-pill">🏛️ Лаборатории</div>
+          <div class="feature-pill">💰 Гранты</div>
+          <div class="feature-pill">📅 Мероприятия</div>
+        </div>
       </div>
     </div>
 
-    <div class="suggestions">
-      <button class="suggestion-chip" data-preset="projects">«Хочу попасть в научный проект по ИИ»</button>
-      <button class="suggestion-chip" data-preset="grants">«Какие есть гранты для студентов?»</button>
-      <button class="suggestion-chip" data-preset="custom">«Интересуюсь ИИ и хочу в реальный проект»</button>
+    <!-- INPUT -->
+    <div class="input-area">
+      <div class="suggestions" id="suggestions">
+        <button class="suggestion-chip" data-preset="custom">«Интересуюсь ИИ и хочу в реальный проект»</button>
+        <button class="suggestion-chip" data-preset="grants">Какие гранты доступны?</button>
+        <button class="suggestion-chip" data-preset="events">Ближайшие хакатоны</button>
+        <button class="suggestion-chip" data-preset="labs">Лаборатории с NLP</button>
+      </div>
+      <div class="input-row">
+        <input class="input-field" id="userInput" type="text"
+               placeholder="Опишите свой интерес или вопрос…">
+        <button class="send-btn" id="sendBtn">➤</button>
+      </div>
     </div>
-
-    <form class="input-row" id="ask-form">
-      <input type="text" id="ask-input" placeholder="Опишите, что вы ищете…" autocomplete="off">
-      <button type="submit" id="ask-btn">Спросить</button>
-    </form>
-  </main>
-
+  </div>
 </div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modalBox">
+    <button class="modal-close" id="modalClose">✕</button>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
 
 <script src="app.js"></script>
 </body>
